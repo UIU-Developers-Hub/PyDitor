@@ -1,3 +1,5 @@
+#E:\UDH\Compiler\ui\test_pandas_model.py
+
 import sys
 import pandas as pd
 from PyQt6.QtWidgets import QApplication

@@ -1,6 +1,11 @@
+#E:\UDH\Compiler\ui\pandas_model.py
+
 import pandas as pd
 from PyQt6.QtCore import QAbstractTableModel, Qt
 
+from PyQt6.QtCore import QRegularExpression
+from PyQt6.QtGui import QTextCharFormat, QColor, QFont
+from .syntax_highlighter import PythonSyntaxHighlighte
 class PandasModel(QAbstractTableModel):
     def __init__(self, dataframe):
         super().__init__()

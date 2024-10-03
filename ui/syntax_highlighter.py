@@ -1,3 +1,5 @@
+# File: ui/syntax_highlighter.py
+
 from PyQt6.QtCore import QRegularExpression
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 
