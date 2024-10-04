@@ -1,17 +1,16 @@
 # File: ui/main_window.py
-
 import os
 import pickle
 import json
 import subprocess
 import sys
 from PyQt6.QtWidgets import (
-    QMainWindow, QTabWidget, QPlainTextEdit, QFileDialog, 
+    QMainWindow, QTabWidget, QPlainTextEdit, QFileDialog,
     QVBoxLayout, QWidget, QHBoxLayout, QSplitter,
     QTreeView, QLineEdit, QStatusBar, QDockWidget, QApplication, QMenu, QInputDialog, QMessageBox, QToolBar
 )
 from PyQt6.QtGui import QFont, QColor, QAction, QShortcut, QKeySequence
-from PyQt6.QtCore import Qt, QThreadPool, QRunnable, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QThreadPool, QRunnable, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QFileSystemModel
 
 from ui.toolbar import Toolbar
@@ -46,11 +45,12 @@ class CodeRunnerRunnable(QRunnable):
         except Exception as e:
             self.signals.error_received.emit(str(e))
 
-
 class AICompilerMainWindow(QMainWindow):
+    # Constants for autosave and session file paths
     RECENT_FILES_LIMIT = 5
     RECENT_FILES_PATH = "recent_files.pkl"
     SETTINGS_PATH = "user_settings.json"
+    SESSION_PATH = "last_session.json"
 
     def __init__(self):
         super().__init__()
@@ -60,8 +60,71 @@ class AICompilerMainWindow(QMainWindow):
         self.setup_ui()
         self.setup_shortcuts()
         self.thread_pool = QThreadPool()
+        
+        
+        # Start autosave timer
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.timeout.connect(self.autosave)
+        self.autosave_timer.start(10000)  # Autosave every 10 seconds
 
+        # Restore the last session
+        self.restore_session()
+    def autosave(self):
+        """Save open tabs periodically to prevent data loss."""
+        try:
+            session_data = {
+                "open_files": [],
+                "current_tab_index": self.tab_widget.currentIndex(),
+            }
+
+            # Iterate over all open tabs and save content
+            for index in range(self.tab_widget.count()):
+                editor = self.tab_widget.widget(index)
+                if isinstance(editor, CodeEditor):
+                    session_data["open_files"].append({
+                        "content": editor.toPlainText(),
+                        "file_path": editor.file_path if hasattr(editor, "file_path") else None,
+                    })
+
+            with open(self.SESSION_PATH, 'w') as session_file:
+                json.dump(session_data, session_file)
+
+        except Exception as e:
+            print(f"Failed to autosave session: {str(e)}")
+
+    def restore_session(self):
+        """Restore the last open session with all tabs and contents."""
+        if os.path.exists(self.SESSION_PATH):
+            try:
+                with open(self.SESSION_PATH, 'r') as session_file:
+                    session_data = json.load(session_file)
+
+                    for file_info in session_data.get("open_files", []):
+                        content = file_info["content"]
+                        file_path = file_info["file_path"]
+
+                        new_editor = CodeEditor()
+                        new_editor.setPlainText(content)
+                        if file_path:
+                            new_editor.file_path = file_path
+
+                        tab_index = self.tab_widget.addTab(new_editor, os.path.basename(file_path) if file_path else "Untitled")
+                        self.tab_widget.setCurrentIndex(tab_index)
+
+                    # Restore the current tab
+                    self.tab_widget.setCurrentIndex(session_data.get("current_tab_index", 0))
+
+            except Exception as e:
+                print(f"Failed to restore session: {str(e)}")
+
+    def closeEvent(self, event):
+        """Handle the event when the window is closed."""
+        self.save_user_settings()
+        self.autosave()  # Save session when closing
+        self.autosave_timer.stop()
+        super().closeEvent(event)
     def setup_ui(self):
+        # Applying a consistent dark theme with contrast
         self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
         self.recent_files = self.load_recent_files()
 
@@ -73,6 +136,7 @@ class AICompilerMainWindow(QMainWindow):
         self.debugger_toolbar = QToolBar("Debugger", self)
         self.addToolBar(self.debugger_toolbar)
 
+        # Add Debugger Actions
         self.start_debugger_action = QAction("Start Debugger", self)
         self.start_debugger_action.triggered.connect(self.start_debugger)
         self.debugger_toolbar.addAction(self.start_debugger_action)
@@ -101,12 +165,14 @@ class AICompilerMainWindow(QMainWindow):
         left_splitter = QSplitter(Qt.Orientation.Horizontal)
         left_splitter.addWidget(self.file_explorer)
 
+        # Tab Widget for Code Editor
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
-        self.add_new_tab()
+        self.add_new_tab()  # Add an initial tab
 
+        # Layout for the right-hand side splitter
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.addWidget(self.tab_widget)
         left_splitter.addWidget(right_splitter)
@@ -125,13 +191,13 @@ class AICompilerMainWindow(QMainWindow):
         self.io_tabs = QTabWidget()
         self.io_tabs.setTabsClosable(False)
         self.input_field = QLineEdit()
-        self.input_field.setStyleSheet("background-color: #1e1e1e; color: #abb2bf;")
+        self.input_field.setStyleSheet("background-color: #2e2e2e; color: #abb2bf; padding: 10px;")
         self.input_field.setPlaceholderText("Input for the script...")
         self.io_tabs.addTab(self.input_field, "Input")
 
         self.output_text = QPlainTextEdit()
         self.output_text.setReadOnly(True)
-        self.output_text.setStyleSheet("background-color: #1e1e1e; color: #abb2bf;")
+        self.output_text.setStyleSheet("background-color: #2e2e2e; color: #abb2bf; padding: 10px;")
         self.output_text.setPlaceholderText("Output/Error logs...")
         self.io_tabs.addTab(self.output_text, "Output")
 
@@ -176,7 +242,7 @@ class AICompilerMainWindow(QMainWindow):
     def add_new_tab(self):
         """Add a new code editor tab."""
         new_editor = CodeEditor()
-        new_editor.setFont(QFont("monospace", 12))
+        new_editor.setFont(QFont("Courier New", 14))  # Updated font settings
         tab_index = self.tab_widget.addTab(new_editor, "Untitled")
         self.tab_widget.setCurrentIndex(tab_index)
 
@@ -304,7 +370,19 @@ class AICompilerMainWindow(QMainWindow):
             signals.error_received.connect(self.handle_error)
             runnable = CodeRunnerRunnable(code, input_value, signals)
             self.thread_pool.start(runnable)
+    def add_new_tab(self):
+        """Add a new code editor tab."""
+        new_editor = CodeEditor()
+        new_editor.setFont(QFont("Courier New", 14))
+        tab_index = self.tab_widget.addTab(new_editor, "Untitled")
+        self.tab_widget.setCurrentIndex(tab_index)
 
+    def open_file(self):
+        """Open a file using a file dialog."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
+        if file_path:
+            self.load_file(file_path)
+            self.add_to_recent_files(file_path)
     # Output Handling
     def handle_output(self, output):
         """Handle output from the code runner or debugger."""
@@ -315,14 +393,6 @@ class AICompilerMainWindow(QMainWindow):
         self.output_text.appendPlainText(error)
 
     # Utility Methods
-    def update_active_tab_style(self):
-        """Update the style of the active tab."""
-        for i in range(self.io_tabs.count()):
-            if i == self.io_tabs.currentIndex():
-                self.io_tabs.tabBar().setTabTextColor(i, QColor("lightgreen"))
-            else:
-                self.io_tabs.tabBar().setTabTextColor(i, QColor("white"))
-
     def load_user_settings(self):
         """Load user settings from a file."""
         if os.path.exists(self.SETTINGS_PATH):
@@ -342,11 +412,6 @@ class AICompilerMainWindow(QMainWindow):
         settings = {"theme": "dark" if self.styleSheet().find("#1e1e1e") != -1 else "light"}
         with open(self.SETTINGS_PATH, 'w') as file:
             json.dump(settings, file)
-
-    def closeEvent(self, event):
-        """Handle the event when the window is closed."""
-        self.save_user_settings()
-        super().closeEvent(event)
 
 
 # Main entry point

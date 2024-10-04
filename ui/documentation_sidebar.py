@@ -9,7 +9,7 @@ class DocumentationSidebar(QDockWidget):
         self.text_browser = QTextBrowser()
         self.setWidget(self.text_browser)
         self.setFixedWidth(300)
-        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | 
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable |
                          QDockWidget.DockWidgetFeature.DockWidgetFloatable)
         self.hide()  # Initially hide the sidebar
 

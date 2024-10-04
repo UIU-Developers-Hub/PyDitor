@@ -1,7 +1,7 @@
 # File: ui/toolbar.py
 
 from PyQt6.QtWidgets import QToolBar, QMenu, QFileDialog, QInputDialog
-from PyQt6.QtGui import QAction, QIcon  # Correct import for QAction from PyQt6.QtGui
+from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
 class Toolbar(QToolBar):
@@ -68,61 +68,44 @@ class Toolbar(QToolBar):
         # Add File Menu Button to Toolbar
         self.addAction(file_menu_action.menuAction())
 
-        # Run Button
+        # Run Code Button
         run_action = QAction("Run Code", self)
-        run_action.setShortcut("Ctrl+R")  # Use Ctrl+R for running code
+        run_action.setShortcut("Ctrl+R")
         run_action.triggered.connect(self.parent.run_code)
         self.addAction(run_action)
 
-        # Separator for better UI grouping
-        self.addSeparator()
-
-        # Debugger Buttons with unique shortcuts
+        # Debugger Button
         debug_action = QAction("Start Debugger", self)
-        debug_action.setShortcut("Ctrl+Shift+D")  # Assign Ctrl+Shift+D for starting the debugger
+        debug_action.setShortcut("Ctrl+Shift+D")
         debug_action.triggered.connect(self.parent.start_debugger)
         self.addAction(debug_action)
 
-        continue_action = QAction("Continue Debugger", self)
-        continue_action.setShortcut("F5")  # Assign F5 for continuing the debugger
-        continue_action.triggered.connect(self.parent.continue_debugger)
-        self.addAction(continue_action)
+        # Separator for better UI grouping
+        self.addSeparator()
 
-        step_action = QAction("Step Debugger", self)
-        step_action.setShortcut("F11")  # Use F11 for stepping in the debugger
-        step_action.triggered.connect(self.parent.step_debugger)
-        self.addAction(step_action)
+        # Snippets Dropdown
+        snippets_menu = QMenu("Snippets", self)
+        snippets = {
+            "For Loop": "for i in range(10):\n    print(i)",
+            "Class Definition": "class MyClass:\n    def __init__(self):\n        pass",
+            "Function Definition": "def my_function():\n    pass",
+            "If Statement": "if condition:\n    pass",
+        }
+
+        for snippet_name, snippet_code in snippets.items():
+            snippet_action = QAction(snippet_name, self)
+            snippet_action.triggered.connect(lambda checked, code=snippet_code: self.parent.insert_snippet(code))
+            snippets_menu.addAction(snippet_action)
+
+        # Add snippets dropdown to toolbar
+        self.addAction(snippets_menu.menuAction())
 
         # Separator for better UI grouping
         self.addSeparator()
 
-        # Font Settings Dropdown
-        font_menu_action = QMenu("Font Settings", self)
-
-        # Font Size Options
-        font_size_menu = QMenu("Font Size", self)
-        for size in [10, 12, 14, 16, 18, 20]:
-            font_size_action = QAction(f"{size} pt", self)
-            font_size_action.triggered.connect(lambda checked, s=size: self.parent.set_font_size(s))
-            font_size_menu.addAction(font_size_action)
-        font_menu_action.addMenu(font_size_menu)
-
-        # Font Family Options
-        font_family_menu = QMenu("Font Family", self)
-        for family in ["Courier New", "Arial", "Times New Roman", "Verdana"]:
-            font_family_action = QAction(family, self)
-            font_family_action.triggered.connect(lambda checked, f=family: self.parent.set_font_family(f))
-            font_family_menu.addAction(font_family_action)
-        font_menu_action.addMenu(font_family_menu)
-
-        # Add Font Settings Dropdown to Toolbar
-        self.addAction(font_menu_action.menuAction())
-
-        # New Tab Button
+        # Add New Tab Button
         new_tab_action = QAction("New Tab", self)
         new_tab_action.setShortcut("Ctrl+T")
         new_tab_action.triggered.connect(self.parent.add_new_tab)
         self.addAction(new_tab_action)
 
-        # Separator for better UI grouping
-        self.addSeparator()
