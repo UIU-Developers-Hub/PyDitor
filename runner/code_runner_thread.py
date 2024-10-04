@@ -1,4 +1,4 @@
-#E:\UDH\Compiler\runner\code_runner_thread.py
+# runner/code_runner_thread.py
 
 from PyQt6.QtCore import QThread, pyqtSignal
 import subprocess
@@ -18,12 +18,17 @@ class CodeRunnerThread(QThread):
             # Construct the command to execute the code
             command = [sys.executable, '-c', self.code]
 
-            # Start the process
+            # Start the process with a timeout to prevent indefinite hangs
             process = subprocess.Popen(command,
                                        stdin=subprocess.PIPE,
                                        stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE)
-            output, error = process.communicate(input=self.input_value.encode())
+            try:
+                output, error = process.communicate(input=self.input_value.encode(), timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                self.error_received.emit("Code execution timed out.")
+                return
 
             # Emit the output if available
             if output:

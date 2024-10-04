@@ -1,31 +1,67 @@
-# File: ui/main_window.py
+# ui/main_window.py
 
 import os
 import pickle
-import re
-import sys
+import json
+import subprocess
+import sys  # Import sys to handle system-level operations like accessing Python executable
 from PyQt6.QtWidgets import (
-    QMainWindow, QTabWidget, QPlainTextEdit, QFileDialog,
+    QMainWindow, QTabWidget, QPlainTextEdit, QFileDialog, 
     QVBoxLayout, QWidget, QHBoxLayout, QSplitter,
-    QTreeView, QLineEdit, QStatusBar, QDockWidget, QApplication, QMenu, QInputDialog
+    QTreeView, QLineEdit, QStatusBar, QDockWidget, QApplication, QMenu, QInputDialog, QMessageBox
 )
-from PyQt6.QtGui import QFont, QColor, QAction
-from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QColor, QAction, QShortcut, QKeySequence
+from PyQt6.QtCore import Qt, QThreadPool, QRunnable, pyqtSignal, QObject
 from PyQt6.QtGui import QFileSystemModel
-from .toolbar import Toolbar
+
+from ui.toolbar import Toolbar
 from runner.code_runner_thread import CodeRunnerThread
-from .documentation_sidebar import DocumentationSidebar
-from .code_editor import CodeEditor
+from ui.documentation_sidebar import DocumentationSidebar
+from ui.code_editor import CodeEditor
+
+
+class Signals(QObject):
+    output_received = pyqtSignal(str)
+    error_received = pyqtSignal(str)
+
+
+class CodeRunnerRunnable(QRunnable):
+    def __init__(self, code, input_value, signals):
+        super().__init__()
+        self.code = code
+        self.input_value = input_value
+        self.signals = signals
+
+    def run(self):
+        try:
+            # Use sys.executable to ensure that the code is executed with the correct Python interpreter
+            command = [sys.executable, '-c', self.code]
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            output, error = process.communicate(input=self.input_value.encode())
+
+            if output:
+                self.signals.output_received.emit(output.decode('utf-8'))
+            if error:
+                self.signals.error_received.emit(error.decode('utf-8'))
+        except Exception as e:
+            self.signals.error_received.emit(str(e))
 
 
 class AICompilerMainWindow(QMainWindow):
     RECENT_FILES_LIMIT = 5
     RECENT_FILES_PATH = "recent_files.pkl"
+    SETTINGS_PATH = "user_settings.json"
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Data Science Code Visualization")
         self.setGeometry(100, 100, 1200, 800)
+        self.load_user_settings()
+        self.setup_ui()
+        self.setup_shortcuts()
+        self.thread_pool = QThreadPool()
+
+    def setup_ui(self):
         self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
 
         # Load recent files
@@ -53,6 +89,7 @@ class AICompilerMainWindow(QMainWindow):
 
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
+        self.tab_widget.setMovable(True)  # Allow rearranging tabs
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
         self.add_new_tab()  # Add an initial new tab
 
@@ -94,92 +131,53 @@ class AICompilerMainWindow(QMainWindow):
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
 
-    # Font Handling Methods
-
-    def set_font_size(self, size):
-        """Set the font size in the current editor."""
-        current_editor = self.tab_widget.currentWidget()
-        if isinstance(current_editor, CodeEditor):
-            current_font = current_editor.font()
-            current_font.setPointSize(size)
-            current_editor.setFont(current_font)
-
-    def set_font_family(self, family):
-        """Set the font family in the current editor."""
-        current_editor = self.tab_widget.currentWidget()
-        if isinstance(current_editor, CodeEditor):
-            current_font = current_editor.font()
-            current_font.setFamily(family)
-            current_editor.setFont(current_font)
-
-    def increase_font_size(self):
-        """Increase the font size in the current editor."""
-        current_editor = self.tab_widget.currentWidget()
-        if isinstance(current_editor, CodeEditor):
-            current_font = current_editor.font()
-            new_size = current_font.pointSize() + 1
-            current_font.setPointSize(new_size)
-            current_editor.setFont(current_font)
-
-    def decrease_font_size(self):
-        """Decrease the font size in the current editor."""
-        current_editor = self.tab_widget.currentWidget()
-        if isinstance(current_editor, CodeEditor):
-            current_font = current_editor.font()
-            new_size = max(current_font.pointSize() - 1, 1)  # Prevent size going below 1
-            current_font.setPointSize(new_size)
-            current_editor.setFont(current_font)
-
-    def change_font_family(self):
-        """Change the font family in the current editor (toggle between two)."""
-        current_editor = self.tab_widget.currentWidget()
-        if isinstance(current_editor, CodeEditor):
-            current_font = current_editor.font()
-            new_family = "Courier New" if current_font.family() != "Courier New" else "Arial"
-            current_font.setFamily(new_family)
-            current_editor.setFont(current_font)
+    def setup_shortcuts(self):
+        """Set up keyboard shortcuts."""
+        QShortcut(QKeySequence("Ctrl+N"), self, activated=self.add_new_tab)
+        QShortcut(QKeySequence("Ctrl+O"), self, activated=self.open_file)
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.save_file)
+        QShortcut(QKeySequence("Ctrl+R"), self, activated=self.run_code)
+        QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
 
     # File Handling Methods
+    def load_recent_files(self):
+        """Load recent files list from a file."""
+        if os.path.exists(self.RECENT_FILES_PATH):
+            with open(self.RECENT_FILES_PATH, 'rb') as file:
+                return pickle.load(file)
+        return []
+
+    def add_to_recent_files(self, file_path):
+        """Add a file path to the recent files list."""
+        if file_path not in self.recent_files:
+            self.recent_files.insert(0, file_path)
+            if len(self.recent_files) > self.RECENT_FILES_LIMIT:
+                self.recent_files.pop()
+            self.save_recent_files()
+
+    def save_recent_files(self):
+        """Save the recent files list to a file."""
+        with open(self.RECENT_FILES_PATH, 'wb') as file:
+            pickle.dump(self.recent_files, file)
+
+    def show_recent_files(self):
+        """Show the recent files menu."""
+        recent_files_menu = QMenu("Recent Files", self)
+        for file_path in self.recent_files:
+            recent_file_action = QAction(file_path, self)
+            recent_file_action.triggered.connect(lambda checked, path=file_path: self.load_file(path))
+            recent_files_menu.addAction(recent_file_action)
+        recent_files_menu.exec(self.mapToGlobal(self.toolbar.geometry().topLeft()))
 
     def open_folder(self):
+        """Open a folder and set it as the root for the file explorer."""
         folder_path = QFileDialog.getExistingDirectory(self, "Open Folder", "")
         if folder_path:
             self.file_model.setRootPath(folder_path)
             self.file_explorer.setRootIndex(self.file_model.index(folder_path))
 
-    def open_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
-        if file_path:
-            self.open_file_from_path(file_path)
-            self.add_to_recent_files(file_path)
-
-    def open_file_from_explorer(self, index):
-        file_path = self.file_model.filePath(index)
-        if file_path.endswith(".py"):
-            self.open_file_from_path(file_path)
-            self.add_to_recent_files(file_path)
-
-    def open_file_from_path(self, file_path):
-        with open(file_path, "r") as file:
-            content = file.read()
-        new_editor = CodeEditor()
-        new_editor.setPlainText(content)
-        tab_index = self.tab_widget.addTab(new_editor, os.path.basename(file_path))
-        self.tab_widget.setCurrentIndex(tab_index)
-        self.statusBar.showMessage(f"Opened: {file_path}", 3000)
-
-    def save_file(self):
-        current_editor = self.tab_widget.currentWidget()
-        if isinstance(current_editor, QPlainTextEdit):
-            file_path, _ = QFileDialog.getSaveFileName(self, "Save Python File", "", "Python Files (*.py);;All Files (*)")
-            if file_path:
-                with open(file_path, "w") as file:
-                    file.write(current_editor.toPlainText())
-                self.add_to_recent_files(file_path)
-                self.statusBar.showMessage(f"Saved: {file_path}", 3000)
-
     def create_new_folder(self):
-        """Create a new folder in the current directory of the file explorer."""
+        """Create a new folder in the current directory."""
         current_index = self.file_explorer.currentIndex()
         current_path = self.file_model.filePath(current_index)
 
@@ -194,13 +192,48 @@ class AICompilerMainWindow(QMainWindow):
             try:
                 os.makedirs(new_folder_path)
                 self.statusBar.showMessage(f"Created folder: {new_folder_path}", 3000)
-                self.file_model.setRootPath(folder_path)  # Refresh file explorer
+                self.file_model.setRootPath(folder_path)
             except Exception as e:
                 self.statusBar.showMessage(f"Error creating folder: {e}", 3000)
 
-    # Code Running and Linting Methods
+    def open_file(self):
+        """Open a file using a file dialog."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
+        if file_path:
+            self.load_file(file_path)
+            self.add_to_recent_files(file_path)
 
+    def open_file_from_explorer(self, index):
+        """Open a file from the file explorer."""
+        file_path = self.file_model.filePath(index)
+        if os.path.isfile(file_path) and file_path.endswith(".py"):
+            self.load_file(file_path)
+            self.add_to_recent_files(file_path)
+
+    def load_file(self, file_path):
+        """Load a file's content into a new editor tab."""
+        with open(file_path, "r") as file:
+            content = file.read()
+        new_editor = CodeEditor()
+        new_editor.setPlainText(content)
+        tab_index = self.tab_widget.addTab(new_editor, os.path.basename(file_path))
+        self.tab_widget.setCurrentIndex(tab_index)
+        self.statusBar.showMessage(f"Opened: {file_path}", 3000)
+
+    def save_file(self):
+        """Save the current file's content."""
+        current_editor = self.tab_widget.currentWidget()
+        if isinstance(current_editor, QPlainTextEdit):
+            file_path, _ = QFileDialog.getSaveFileName(self, "Save Python File", "", "Python Files (*.py);;All Files (*)")
+            if file_path:
+                with open(file_path, "w") as file:
+                    file.write(current_editor.toPlainText())
+                self.add_to_recent_files(file_path)
+                self.statusBar.showMessage(f"Saved: {file_path}", 3000)
+
+    # Code Execution Methods
     def run_code(self):
+        """Run the code from the current editor."""
         current_editor = self.tab_widget.currentWidget()
         if isinstance(current_editor, CodeEditor):
             code = current_editor.toPlainText()
@@ -210,80 +243,82 @@ class AICompilerMainWindow(QMainWindow):
                 self.statusBar.showMessage("Error: No code to run!", 3000)
                 return
 
-            # Run linting before executing code
-            current_editor.lint_code()
-
-            # Run the code in a separate thread
-            self.runner = CodeRunnerThread(code, input_value)
-            self.runner.output_received.connect(self.handle_output)
-            self.runner.error_received.connect(self.handle_error)
-            self.runner.start()
+            # Run the code using QRunnable for threading
+            signals = Signals()
+            signals.output_received.connect(self.handle_output)
+            signals.error_received.connect(self.handle_error)
+            runnable = CodeRunnerRunnable(code, input_value, signals)
+            self.thread_pool.start(runnable)
 
     def handle_output(self, output):
+        """Handle output from the code runner."""
         self.output_text.clear()
         self.output_text.appendPlainText(output)
 
     def handle_error(self, error):
+        """Handle errors from the code runner."""
         self.output_text.clear()
         self.output_text.appendPlainText(error)
 
-        # Extract line number from the error message if available
-        match = re.search(r'File ".+?", line (\d+)', error)
-        if match:
-            line_number = int(match.group(1))
-            current_editor = self.tab_widget.currentWidget()
-            if isinstance(current_editor, CodeEditor):
-                current_editor.highlight_error_line(line_number)
-
-    # Recent File Handling Methods
-
-    def show_recent_files(self):
-        recent_files_menu = QMenu("Recent Files", self)
-        for file_path in self.recent_files:
-            recent_file_action = QAction(file_path, self)
-            recent_file_action.triggered.connect(lambda checked, path=file_path: self.open_file_from_path(path))
-            recent_files_menu.addAction(recent_file_action)
-        recent_files_menu.exec(self.mapToGlobal(self.toolbar.geometry().topLeft()))
-
-    def add_to_recent_files(self, file_path):
-        if file_path not in self.recent_files:
-            self.recent_files.insert(0, file_path)
-            if len(self.recent_files) > self.RECENT_FILES_LIMIT:
-                self.recent_files.pop()
-            self.save_recent_files()
-
-    def load_recent_files(self):
-        if os.path.exists(self.RECENT_FILES_PATH):
-            with open(self.RECENT_FILES_PATH, 'rb') as file:
-                return pickle.load(file)
-        return []
-
-    def save_recent_files(self):
-        with open(self.RECENT_FILES_PATH, 'wb') as file:
-            pickle.dump(self.recent_files, file)
-
     # Utility Methods
-
     def add_new_tab(self):
+        """Add a new code editor tab."""
         new_editor = CodeEditor()
         new_editor.setFont(QFont("monospace", 12))
         tab_index = self.tab_widget.addTab(new_editor, "Untitled")
         self.tab_widget.setCurrentIndex(tab_index)
 
     def close_tab(self, index):
+        """Close a tab, prompting to save if there are unsaved changes."""
+        current_editor = self.tab_widget.widget(index)
+        if isinstance(current_editor, CodeEditor):
+            if current_editor.document().isModified():
+                reply = QMessageBox.question(self, 'Unsaved Changes',
+                                             "This document has unsaved changes. Do you want to save them?",
+                                             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+                if reply == QMessageBox.StandardButton.Save:
+                    self.save_file()
+                elif reply == QMessageBox.StandardButton.Cancel:
+                    return
         self.tab_widget.removeTab(index)
 
     def update_active_tab_style(self):
+        """Update the style of the active tab."""
         for i in range(self.io_tabs.count()):
             if i == self.io_tabs.currentIndex():
-                self.io_tabs.tabBar().setTabTextColor(i, QColor("lightgreen"))  # Highlight active tab
+                self.io_tabs.tabBar().setTabTextColor(i, QColor("lightgreen"))
             else:
-                self.io_tabs.tabBar().setTabTextColor(i, QColor("white"))  # Reset to default color
+                self.io_tabs.tabBar().setTabTextColor(i, QColor("white"))
+
+    def load_user_settings(self):
+        """Load user settings from a file."""
+        if os.path.exists(self.SETTINGS_PATH):
+            with open(self.SETTINGS_PATH, 'r') as file:
+                settings = json.load(file)
+                self.apply_user_settings(settings)
+
+    def apply_user_settings(self, settings):
+        """Apply user settings to the UI."""
+        if "theme" in settings and settings["theme"] == "dark":
+            self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
+        else:
+            self.setStyleSheet("background-color: rgba(255, 255, 255, 0.85); color: black;")
+
+    def save_user_settings(self):
+        """Save the current user settings."""
+        settings = {"theme": "dark" if self.styleSheet().find("#1e1e1e") != -1 else "light"}
+        with open(self.SETTINGS_PATH, 'w') as file:
+            json.dump(settings, file)
+
+    def closeEvent(self, event):
+        """Handle the event when the window is closed."""
+        self.save_user_settings()
+        super().closeEvent(event)
 
 
 # Main entry point
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
+    app = QApplication([])
     main_win = AICompilerMainWindow()
     main_win.show()
-    sys.exit(app.exec())
+    app.exec()

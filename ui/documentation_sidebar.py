@@ -1,6 +1,6 @@
-#E:\UDH\Compiler\ui\documentation_sidebar.py
+# ui/documentation_sidebar.py
 
-from PyQt6.QtWidgets import QDockWidget, QTextBrowser  # Import QDockWidget and QTextBrowser
+from PyQt6.QtWidgets import QDockWidget, QTextBrowser
 from PyQt6.QtCore import Qt
 
 class DocumentationSidebar(QDockWidget):
@@ -9,7 +9,8 @@ class DocumentationSidebar(QDockWidget):
         self.text_browser = QTextBrowser()
         self.setWidget(self.text_browser)
         self.setFixedWidth(300)
-        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | 
+                         QDockWidget.DockWidgetFeature.DockWidgetFloatable)
         self.hide()  # Initially hide the sidebar
 
     def set_widget_content(self, content):
