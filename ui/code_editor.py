@@ -1,8 +1,10 @@
 import sys  # Ensure sys is imported for subprocess handling
 import jedi
+import subprocess
+import os
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QCompleter, QToolTip, QMessageBox
 from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QTextCharFormat
-from PyQt6.QtCore import QRect, QSize, Qt, QStringListModel, pyqtSignal, QObject
+from PyQt6.QtCore import QRect, QSize, Qt, QStringListModel, pyqtSignal, QObject, QTimer
 from concurrent.futures import ThreadPoolExecutor
 from .syntax_highlighter import PythonSyntaxHighlighter
 
@@ -48,6 +50,80 @@ class CodeEditor(QPlainTextEdit):
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.worker_signals = CompletionWorkerSignals()
         self.worker_signals.completion_ready.connect(self.show_completions)
+
+        # Linting debounce timer
+        self.lint_timer = QTimer(self)
+        self.lint_timer.setInterval(1000)  # Set debounce interval to 1 second
+        self.lint_timer.timeout.connect(self.lint_code)
+        self.textChanged.connect(self.on_text_changed)
+
+        # Dictionary to keep track of linting errors per line
+        self.lint_errors = {}
+
+    def on_text_changed(self):
+        """Handle text changes and debounce linting."""
+        self.lint_timer.start()  # Restart the debounce timer
+
+    def lint_code(self):
+        """Lint the code using pylint."""
+        code = self.toPlainText()
+
+        # Write code to a temporary file to lint
+        temp_filename = "temp_code.py"
+        with open(temp_filename, "w") as temp_file:
+            temp_file.write(code)
+
+        # Run pylint on the temporary file
+        try:
+            result = subprocess.run(
+                ['pylint', temp_filename, '--output-format', 'json'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            # Remove temporary file after linting
+            os.remove(temp_filename)
+
+            # Parse pylint output
+            lint_output = result.stdout.decode('utf-8')
+            if lint_output:
+                import json
+                lint_data = json.loads(lint_output)
+                self.highlight_lint_errors(lint_data)
+
+        except Exception as e:
+            print(f"Linting error: {e}")
+
+    def highlight_lint_errors(self, lint_data):
+        """Highlight lines with linting errors."""
+        self.lint_errors.clear()
+
+        # Clear previous extra selections for lint errors
+        self.highlight_current_line()  # This will remove all previous selections
+
+        extra_selections = []
+
+        for error in lint_data:
+            line_number = error.get('line') - 1
+            message = error.get('message')
+            self.lint_errors[line_number] = message
+
+            # Create an extra selection for lint error highlighting
+            selection = QTextEdit.ExtraSelection()
+            error_color = QColor("#FF6347")  # Tomato color for errors
+            selection.format.setBackground(error_color)
+            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+
+            # Move cursor to the problematic line
+            cursor = self.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.MoveAnchor, line_number)
+            selection.cursor = cursor
+            selection.cursor.clearSelection()
+
+            extra_selections.append(selection)
+
+        self.setExtraSelections(extra_selections)
 
     def line_number_area_width(self):
         """Calculate the width required for the line number area."""
@@ -100,7 +176,6 @@ class CodeEditor(QPlainTextEdit):
         """Highlight the current line where the cursor is."""
         extra_selections = []
         if not self.isReadOnly():
-            # Create an instance of QTextEdit.ExtraSelection
             selection = QTextEdit.ExtraSelection()
             line_color = QColor("#3b3b3b")
             selection.format.setBackground(line_color)
@@ -110,43 +185,48 @@ class CodeEditor(QPlainTextEdit):
             extra_selections.append(selection)
         self.setExtraSelections(extra_selections)
 
+    def insert_completion(self, completion):
+        """Insert the selected completion into the editor."""
+        cursor = self.textCursor()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        cursor.insertText(completion)
+        self.setTextCursor(cursor)
+
+    def keyPressEvent(self, event):
+        """Override keyPressEvent to capture key presses for autocompletion and signature help."""
+        super().keyPressEvent(event)
+
+        if event.text() == "(":
+            self.show_signature_help()
+
+        if event.text() in (".", "(", "[", "{"):
+            self.handle_autocompletion()
+
     def handle_autocompletion(self):
         """Handle the logic for showing autocompletion suggestions by using a background thread."""
         cursor = self.textCursor()
-        # Use the actual position of the cursor to get the correct location in the code
         position = cursor.position()
         line = cursor.blockNumber() + 1
         column = cursor.columnNumber()
 
-        # Fetch the full content of the editor to pass to Jedi
         source = self.toPlainText()
 
-        # Debugging output to understand what's being processed
-        print(f"handle_autocompletion() triggered, line: {line}, column: {column}, position: {position}")
-
-        # Only trigger autocomplete when it makes sense (e.g., alphabetic characters or dot)
+        # Trigger Jedi to analyze and fetch completions
         if not source or not source[position - 1].isidentifier() and source[position - 1] != '.':
             self.completer.popup().hide()
             return
 
-        # Submit Jedi analysis to the thread pool
         self.executor.submit(self.get_completions, source, line, column)
 
     def get_completions(self, source, line, column):
         """Use Jedi to get completions in a background thread."""
         try:
-            # Create a Jedi script with the entire source
             script = jedi.Script(code=source, path='<stdin>')
             completions = script.complete(line=line, column=column)
 
-            # Debugging print to check if Jedi is returning completions
-            print(f"get_completions() called: line {line}, column {column}, completions found: {[c.name for c in completions]}")
-
-            # Extract the completion names and details
             completion_suggestions = [completion.name for completion in completions]
             completion_docs = [completion.docstring() for completion in completions]
 
-            # Emit signal to update UI
             self.worker_signals.completion_ready.emit(completion_suggestions, completion_docs)
         except Exception as e:
             print(f"Jedi Error in get_completions: {e}")
@@ -157,78 +237,11 @@ class CodeEditor(QPlainTextEdit):
             self.completer.popup().hide()
             return
 
-        # Set the model for the completer
         model = QStringListModel(completion_suggestions, self.completer)
         self.completer.setModel(model)
 
-        # Cache completion documentation to be shown later
         self.completion_docs = completion_docs
-
-        # Move completer to the cursor position
         rect = self.cursorRect()
         rect.setWidth(self.completer.popup().sizeHintForColumn(0) + self.completer.popup().verticalScrollBar().sizeHint().width())
-        self.completer.complete(rect)  # Show the popup at the cursor
+        self.completer.complete(rect)
 
-        # Debugging print for completions
-        print(f"show_completions() called, suggestions: {completion_suggestions}")
-
-    def show_completion_details(self, index):
-        """Show a tooltip with the documentation of the selected completion."""
-        if index >= 0 and index < len(self.completion_docs):
-            doc = self.completion_docs[index]
-            if doc:
-                # Display the tooltip with the documentation string
-                QToolTip.showText(self.mapToGlobal(self.cursorRect().bottomRight()), doc)
-
-    def insert_completion(self, completion):
-        """Insert the selected completion into the editor and suggest imports if necessary."""
-        cursor = self.textCursor()
-        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
-        cursor.insertText(completion)
-        self.setTextCursor(cursor)
-
-        # Handle automatic import suggestion
-        suggested_import = self.get_import_statement(completion)
-        if suggested_import and suggested_import not in self.toPlainText():
-            # Suggest adding the import statement
-            add_import = QMessageBox.question(
-                self,
-                "Missing Import",
-                f"The completion '{completion}' requires an import. Do you want to add: '{suggested_import}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if add_import == QMessageBox.StandardButton.Yes:
-                self.insert_import(suggested_import)
-
-    def get_import_statement(self, completion):
-        """Use Jedi to determine the necessary import for a given completion."""
-        try:
-            # Use Jedi to create a script context and fetch completions
-            script = jedi.Script(f"{completion}")
-            completions = script.complete()
-
-            for comp in completions:
-                if comp.name == completion and comp.module_name:
-                    # Return the import statement for the missing module
-                    return f"import {comp.module_name}"
-        except Exception as e:
-            print(f"Jedi Error in get_import_statement: {e}")
-        return None
-
-    def insert_import(self, import_statement):
-        """Insert an import statement at the top of the document."""
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        cursor.insertText(import_statement + "\n")
-        self.setTextCursor(cursor)
-
-    def keyPressEvent(self, event):
-        """Override keyPressEvent to capture key presses for autocompletion."""
-        super().keyPressEvent(event)
-
-        # Debugging output for key presses
-        print(f"keyPressEvent() called, key: '{event.text()}'")
-
-        # Trigger autocompletion manually if necessary
-        if event.text() in (".", "(", "[", "{"):  # Characters that may warrant a completion
-            self.handle_autocompletion()
