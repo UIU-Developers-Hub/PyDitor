@@ -1,3 +1,5 @@
+# File: ui/code_editor.py
+
 import sys  # Ensure sys is imported for subprocess handling
 import jedi
 import subprocess
@@ -244,4 +246,3 @@ class CodeEditor(QPlainTextEdit):
         rect = self.cursorRect()
         rect.setWidth(self.completer.popup().sizeHintForColumn(0) + self.completer.popup().verticalScrollBar().sizeHint().width())
         self.completer.complete(rect)
-

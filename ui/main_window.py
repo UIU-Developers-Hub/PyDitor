@@ -1,14 +1,14 @@
-# ui/main_window.py
+# File: ui/main_window.py
 
 import os
 import pickle
 import json
 import subprocess
-import sys  # Import sys to handle system-level operations like accessing Python executable
+import sys
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QPlainTextEdit, QFileDialog, 
     QVBoxLayout, QWidget, QHBoxLayout, QSplitter,
-    QTreeView, QLineEdit, QStatusBar, QDockWidget, QApplication, QMenu, QInputDialog, QMessageBox
+    QTreeView, QLineEdit, QStatusBar, QDockWidget, QApplication, QMenu, QInputDialog, QMessageBox, QToolBar
 )
 from PyQt6.QtGui import QFont, QColor, QAction, QShortcut, QKeySequence
 from PyQt6.QtCore import Qt, QThreadPool, QRunnable, pyqtSignal, QObject
@@ -16,6 +16,7 @@ from PyQt6.QtGui import QFileSystemModel
 
 from ui.toolbar import Toolbar
 from runner.code_runner_thread import CodeRunnerThread
+from runner.debugger_thread import DebuggerThread
 from ui.documentation_sidebar import DocumentationSidebar
 from ui.code_editor import CodeEditor
 
@@ -34,7 +35,6 @@ class CodeRunnerRunnable(QRunnable):
 
     def run(self):
         try:
-            # Use sys.executable to ensure that the code is executed with the correct Python interpreter
             command = [sys.executable, '-c', self.code]
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             output, error = process.communicate(input=self.input_value.encode())
@@ -63,19 +63,33 @@ class AICompilerMainWindow(QMainWindow):
 
     def setup_ui(self):
         self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
-
-        # Load recent files
         self.recent_files = self.load_recent_files()
 
         # Initialize Toolbar
         self.toolbar = Toolbar(self)
         self.addToolBar(self.toolbar)
 
+        # Add Debugger Controls
+        self.debugger_toolbar = QToolBar("Debugger", self)
+        self.addToolBar(self.debugger_toolbar)
+
+        self.start_debugger_action = QAction("Start Debugger", self)
+        self.start_debugger_action.triggered.connect(self.start_debugger)
+        self.debugger_toolbar.addAction(self.start_debugger_action)
+
+        self.continue_debugger_action = QAction("Continue", self)
+        self.continue_debugger_action.triggered.connect(self.continue_debugger)
+        self.debugger_toolbar.addAction(self.continue_debugger_action)
+
+        self.step_debugger_action = QAction("Step", self)
+        self.step_debugger_action.triggered.connect(self.step_debugger)
+        self.debugger_toolbar.addAction(self.step_debugger_action)
+
         # Initialize documentation sidebar
         self.documentation_sidebar = DocumentationSidebar()
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.documentation_sidebar)
 
-        # File Explorer
+        # File Explorer setup
         self.file_explorer = QTreeView()
         self.file_model = QFileSystemModel()
         self.file_model.setRootPath('')
@@ -83,33 +97,33 @@ class AICompilerMainWindow(QMainWindow):
         self.file_explorer.setRootIndex(self.file_model.index(''))
         self.file_explorer.clicked.connect(self.open_file_from_explorer)
 
-        # Create a splitter for layout management
+        # Create Splitters and Layouts
         left_splitter = QSplitter(Qt.Orientation.Horizontal)
         left_splitter.addWidget(self.file_explorer)
 
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
-        self.tab_widget.setMovable(True)  # Allow rearranging tabs
+        self.tab_widget.setMovable(True)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
-        self.add_new_tab()  # Add an initial new tab
+        self.add_new_tab()
 
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.addWidget(self.tab_widget)
-
-        # Set the proportions for the left panel
         left_splitter.addWidget(right_splitter)
-        left_splitter.setSizes([200, 800])
 
         central_widget = QWidget()
         main_layout = QHBoxLayout(central_widget)
         main_layout.addWidget(left_splitter)
         self.setCentralWidget(central_widget)
 
-        # Create a tab for Input and Output
+        self.setup_io_tabs(right_splitter)
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
+
+    def setup_io_tabs(self, right_splitter):
+        """Set up Input/Output tabs in the right splitter."""
         self.io_tabs = QTabWidget()
         self.io_tabs.setTabsClosable(False)
-        self.io_tabs.currentChanged.connect(self.update_active_tab_style)
-
         self.input_field = QLineEdit()
         self.input_field.setStyleSheet("background-color: #1e1e1e; color: #abb2bf;")
         self.input_field.setPlaceholderText("Input for the script...")
@@ -124,20 +138,61 @@ class AICompilerMainWindow(QMainWindow):
         io_container = QWidget()
         io_layout = QVBoxLayout(io_container)
         io_layout.addWidget(self.io_tabs)
-
-        # Add the IO container to the right splitter
         right_splitter.addWidget(io_container)
-
-        self.statusBar = QStatusBar()
-        self.setStatusBar(self.statusBar)
 
     def setup_shortcuts(self):
         """Set up keyboard shortcuts."""
-        QShortcut(QKeySequence("Ctrl+N"), self, activated=self.add_new_tab)
-        QShortcut(QKeySequence("Ctrl+O"), self, activated=self.open_file)
-        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.save_file)
-        QShortcut(QKeySequence("Ctrl+R"), self, activated=self.run_code)
-        QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
+        QShortcut(QKeySequence("Ctrl+Shift+N"), self, activated=self.add_new_tab)
+        QShortcut(QKeySequence("Ctrl+Shift+O"), self, activated=self.open_file)
+        QShortcut(QKeySequence("Ctrl+Shift+S"), self, activated=self.save_file)
+        QShortcut(QKeySequence("Ctrl+Shift+R"), self, activated=self.run_code)
+        QShortcut(QKeySequence("Ctrl+Shift+D"), self, activated=self.start_debugger)
+
+    def start_debugger(self):
+        """Start the debugger for the current code."""
+        current_editor = self.tab_widget.currentWidget()
+        if isinstance(current_editor, CodeEditor):
+            code = current_editor.toPlainText()
+            if not code.strip():
+                self.statusBar.showMessage("Error: No code to debug!", 3000)
+                return
+
+            self.debugger_thread = DebuggerThread(code)
+            self.debugger_thread.output_received.connect(self.handle_output)
+            self.debugger_thread.error_received.connect(self.handle_error)
+            self.debugger_thread.start()
+            current_editor.set_debugger_thread(self.debugger_thread)
+
+    def continue_debugger(self):
+        """Continue the execution in the debugger."""
+        if hasattr(self, 'debugger_thread'):
+            self.debugger_thread.send_command("continue")
+
+    def step_debugger(self):
+        """Step through the code in the debugger."""
+        if hasattr(self, 'debugger_thread'):
+            self.debugger_thread.send_command("step")
+
+    def add_new_tab(self):
+        """Add a new code editor tab."""
+        new_editor = CodeEditor()
+        new_editor.setFont(QFont("monospace", 12))
+        tab_index = self.tab_widget.addTab(new_editor, "Untitled")
+        self.tab_widget.setCurrentIndex(tab_index)
+
+    def close_tab(self, index):
+        """Close a tab, prompting to save if there are unsaved changes."""
+        current_editor = self.tab_widget.widget(index)
+        if isinstance(current_editor, CodeEditor):
+            if current_editor.document().isModified():
+                reply = QMessageBox.question(self, 'Unsaved Changes',
+                                             "This document has unsaved changes. Do you want to save them?",
+                                             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+                if reply == QMessageBox.StandardButton.Save:
+                    self.save_file()
+                elif reply == QMessageBox.StandardButton.Cancel:
+                    return
+        self.tab_widget.removeTab(index)
 
     # File Handling Methods
     def load_recent_files(self):
@@ -250,38 +305,16 @@ class AICompilerMainWindow(QMainWindow):
             runnable = CodeRunnerRunnable(code, input_value, signals)
             self.thread_pool.start(runnable)
 
+    # Output Handling
     def handle_output(self, output):
-        """Handle output from the code runner."""
-        self.output_text.clear()
+        """Handle output from the code runner or debugger."""
         self.output_text.appendPlainText(output)
 
     def handle_error(self, error):
-        """Handle errors from the code runner."""
-        self.output_text.clear()
+        """Handle errors from the code runner or debugger."""
         self.output_text.appendPlainText(error)
 
     # Utility Methods
-    def add_new_tab(self):
-        """Add a new code editor tab."""
-        new_editor = CodeEditor()
-        new_editor.setFont(QFont("monospace", 12))
-        tab_index = self.tab_widget.addTab(new_editor, "Untitled")
-        self.tab_widget.setCurrentIndex(tab_index)
-
-    def close_tab(self, index):
-        """Close a tab, prompting to save if there are unsaved changes."""
-        current_editor = self.tab_widget.widget(index)
-        if isinstance(current_editor, CodeEditor):
-            if current_editor.document().isModified():
-                reply = QMessageBox.question(self, 'Unsaved Changes',
-                                             "This document has unsaved changes. Do you want to save them?",
-                                             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
-                if reply == QMessageBox.StandardButton.Save:
-                    self.save_file()
-                elif reply == QMessageBox.StandardButton.Cancel:
-                    return
-        self.tab_widget.removeTab(index)
-
     def update_active_tab_style(self):
         """Update the style of the active tab."""
         for i in range(self.io_tabs.count()):

@@ -70,9 +70,28 @@ class Toolbar(QToolBar):
 
         # Run Button
         run_action = QAction("Run Code", self)
-        run_action.setShortcut("Ctrl+R")
+        run_action.setShortcut("Ctrl+R")  # Use Ctrl+R for running code
         run_action.triggered.connect(self.parent.run_code)
         self.addAction(run_action)
+
+        # Separator for better UI grouping
+        self.addSeparator()
+
+        # Debugger Buttons with unique shortcuts
+        debug_action = QAction("Start Debugger", self)
+        debug_action.setShortcut("Ctrl+Shift+D")  # Assign Ctrl+Shift+D for starting the debugger
+        debug_action.triggered.connect(self.parent.start_debugger)
+        self.addAction(debug_action)
+
+        continue_action = QAction("Continue Debugger", self)
+        continue_action.setShortcut("F5")  # Assign F5 for continuing the debugger
+        continue_action.triggered.connect(self.parent.continue_debugger)
+        self.addAction(continue_action)
+
+        step_action = QAction("Step Debugger", self)
+        step_action.setShortcut("F11")  # Use F11 for stepping in the debugger
+        step_action.triggered.connect(self.parent.step_debugger)
+        self.addAction(step_action)
 
         # Separator for better UI grouping
         self.addSeparator()
