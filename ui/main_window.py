@@ -86,6 +86,12 @@ class AICompilerMainWindow(QMainWindow):
         font_button.clicked.connect(self.open_font_dialog)
         self.toolbar.addWidget(font_button)
 
+        # Add "Run Tests" Button to Toolbar
+        run_tests_action = QAction("Run Tests", self)
+        run_tests_action.setShortcut("Ctrl+T")
+        run_tests_action.triggered.connect(self.run_tests)
+        self.toolbar.addAction(run_tests_action)
+
         # Add Debugger Controls
         self.debugger_toolbar = QToolBar("Debugger", self)
         self.addToolBar(self.debugger_toolbar)
@@ -168,7 +174,36 @@ class AICompilerMainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+S"), self, activated=self.save_file)
         QShortcut(QKeySequence("Ctrl+Shift+R"), self, activated=self.run_code)
         QShortcut(QKeySequence("Ctrl+Shift+D"), self, activated=self.start_debugger)
+    def run_tests(self):
+        """Run unit tests from the current editor."""
+        current_editor = self.tab_widget.currentWidget()
+        if isinstance(current_editor, CodeEditor):
+            code = current_editor.toPlainText()
+            temp_filename = "temp_test_code.py"
 
+            with open(temp_filename, "w") as temp_file:
+                temp_file.write(code)
+
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "unittest", temp_filename],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                output = result.stdout.decode('utf-8')
+                error = result.stderr.decode('utf-8')
+                self.io_tabs.setCurrentIndex(1)
+                if output:
+                    self.output_text.appendPlainText(output)
+                if error:
+                    self.output_text.appendPlainText(error)
+            except Exception as e:
+                self.output_text.appendPlainText(f"Error running tests: {str(e)}")
+            finally:
+                try:
+                    os.remove(temp_filename)
+                except Exception as e:
+                    self.output_text.appendPlainText(f"Error removing temp file: {str(e)}")
     def open_file(self):
         """Open a file using a file dialog."""
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
@@ -448,12 +483,19 @@ class AICompilerMainWindow(QMainWindow):
         with open(self.SETTINGS_PATH, 'w') as file:
             json.dump(settings, file)
 
-    def closeEvent(self, event):
-        """Handle the event when the window is closed."""
-        self.save_user_settings()
-        self.autosave()  # Save session when closing
-        self.autosave_timer.stop()
-        super().closeEvent(event)
+    def close_tab(self, index):
+        """Prompt to save before closing a tab if there are unsaved changes."""
+        current_editor = self.tab_widget.widget(index)
+        if isinstance(current_editor, CodeEditor):
+            if current_editor.document().isModified():
+                reply = QMessageBox.question(self, 'Unsaved Changes',
+                                         "This document has unsaved changes. Do you want to save them?",
+                                         QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+                if reply == QMessageBox.StandardButton.Save:
+                    self.save_file()
+                elif reply == QMessageBox.StandardButton.Cancel:
+                    return  # Cancel closing the tab
+        self.tab_widget.removeTab(index)
 
 
 # Main entry point

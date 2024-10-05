@@ -1,16 +1,15 @@
-# File: ui/code_editor.py
-
-import sys  # Ensure sys is imported for subprocess handling
+import sys
+import os
 import jedi
 import subprocess
-import os
-import time  # For adding a delay to ensure subprocess completes
-from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QCompleter, QToolTip, QMessageBox
-from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QTextCharFormat
+import time
+from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QCompleter, QToolTip
+from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor
 from PyQt6.QtCore import QRect, QSize, Qt, QStringListModel, pyqtSignal, QObject, QTimer, QThread
 from concurrent.futures import ThreadPoolExecutor
 from .syntax_highlighter import PythonSyntaxHighlighter
 
+# LineNumberArea class to display line numbers in the editor
 class LineNumberArea(QWidget):
     def __init__(self, editor):
         super().__init__(editor)
@@ -22,14 +21,13 @@ class LineNumberArea(QWidget):
     def paintEvent(self, event):
         self.code_editor.line_number_area_paint_event(event)
 
+# Signals for the background worker, allowing communication back to the main thread
 class CompletionWorkerSignals(QObject):
-    """Signals to be emitted by the background thread worker to update the UI."""
     completion_ready = pyqtSignal(list, list)
 
-
+# LintWorker class for linting code in a separate thread
 class LintWorker(QThread):
-    """A QThread to handle linting operations without blocking the UI."""
-    lint_result = pyqtSignal(list)  # Emit lint data when finished
+    lint_result = pyqtSignal(list)
 
     def __init__(self, code, temp_filename):
         super().__init__()
@@ -38,79 +36,77 @@ class LintWorker(QThread):
 
     def run(self):
         try:
-            # Write code to a temporary file for linting
-            with open(self.temp_filename, "w") as temp_file:
-                temp_file.write(self.code)
-
-            # Run pylint on the temporary file
-            result = subprocess.run(
-                ['pylint', self.temp_filename, '--output-format', 'json'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            lint_output = result.stdout.decode('utf-8')
-            if lint_output:
-                import json
-                lint_data = json.loads(lint_output)
+            self._write_code_to_temp_file()
+            lint_output = self._run_pylint()
+            lint_data = self._parse_lint_output(lint_output)
+            if lint_data:
                 self.lint_result.emit(lint_data)
-
         except Exception as e:
             print(f"Linting error: {e}")
-
         finally:
-            # Add a small delay to ensure the file is not in use anymore
-            time.sleep(0.1)
-            # Ensure the temporary file is removed if it exists
+            self._delete_temp_file()
+
+    def _write_code_to_temp_file(self):
+        with open(self.temp_filename, "w") as temp_file:
+            temp_file.write(self.code)
+
+    def _run_pylint(self):
+        result = subprocess.run(['pylint', self.temp_filename, '--output-format', 'json'],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return result.stdout.decode('utf-8')
+
+    def _parse_lint_output(self, lint_output):
+        if lint_output:
+            import json
+            return json.loads(lint_output)
+        return []
+
+    def _delete_temp_file(self):
+        time.sleep(0.1)
+        for attempt in range(3):
             try:
                 if os.path.exists(self.temp_filename):
                     os.remove(self.temp_filename)
+                    return
             except PermissionError:
-                # Handle the case where the file cannot be removed immediately
-                print(f"PermissionError: Could not delete '{self.temp_filename}'. Will try again shortly.")
-                time.sleep(0.5)  # Additional delay to allow pylint to release the file
-                try:
-                    if os.path.exists(self.temp_filename):
-                        os.remove(self.temp_filename)
-                except Exception as e:
-                    print(f"Failed to delete temporary file '{self.temp_filename}': {e}")
+                time.sleep(0.5)
+        print(f"Failed to delete temporary file '{self.temp_filename}' after 3 attempts.")
 
-
+# CodeEditor class for the main editor functionality
 class CodeEditor(QPlainTextEdit):
     def __init__(self):
         super().__init__()
+        self._setup_ui()
+        self._setup_highlighting_and_autocompletion()
+        self._setup_linting()
+
+        # Track lint errors and breakpoints
+        self.lint_errors = {}
+
+    def _setup_ui(self):
         self.lineNumberArea = LineNumberArea(self)
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
-
-        # Initialize syntax highlighter
-        self.highlighter = PythonSyntaxHighlighter(self.document())
-
-        # Set background and text colors
         self.setStyleSheet("background-color: #2b2b2b; color: white;")
 
-        # Set up for autocompletion (Deferred Initialization)
+    def _setup_highlighting_and_autocompletion(self):
+        self.highlighter = PythonSyntaxHighlighter(self.document())
         self.completer = None
-        self.initialize_autocompleter()
-
-        # Create thread pool executor for Jedi autocompletion (limit max workers to avoid performance issues)
+        self._initialize_autocompleter()
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.worker_signals = CompletionWorkerSignals()
         self.worker_signals.completion_ready.connect(self.show_completions)
 
-        # Linting debounce timer (increase interval to reduce frequency)
+    def _setup_linting(self):
         self.lint_timer = QTimer(self)
-        self.lint_timer.setInterval(1500)  # Set debounce interval to 1.5 seconds for better performance
+        self.lint_timer.setInterval(1500)
         self.lint_timer.timeout.connect(self.lint_code)
-        self.textChanged.connect(self.on_text_changed)
+        self.textChanged.connect(self._on_text_changed)
 
-        # Dictionary to keep track of linting errors per line
-        self.lint_errors = {}
-
-    def initialize_autocompleter(self):
-        """Deferred initialization for autocompleter to improve startup performance."""
+    def _initialize_autocompleter(self):
         if self.completer is None:
             self.completer = QCompleter(self)
             self.completer.popup().setStyleSheet("background-color: #2b2b2b; color: white;")
@@ -118,61 +114,46 @@ class CodeEditor(QPlainTextEdit):
             self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
             self.completer.activated.connect(self.insert_completion)
 
-    def on_text_changed(self):
-        """Handle text changes and debounce linting."""
-        self.lint_timer.start()  # Restart the debounce timer
+    def _on_text_changed(self):
+        self.lint_timer.start()
 
     def lint_code(self):
-        """Lint the code using pylint asynchronously."""
         code = self.toPlainText()
         temp_filename = "temp_code.py"
-
-        # Create and start the lint worker thread
         self.lint_worker = LintWorker(code, temp_filename)
-        self.lint_worker.lint_result.connect(self.highlight_lint_errors)
+        self.lint_worker.lint_result.connect(self._highlight_lint_errors)
         self.lint_worker.start()
 
-    def highlight_lint_errors(self, lint_data):
-        """Highlight lines with linting errors in a more subtle way."""
+    def _highlight_lint_errors(self, lint_data):
         self.lint_errors.clear()
-
-        # Clear previous extra selections for lint errors
-        self.highlight_current_line()  # This will remove all previous selections
-
+        self.highlight_current_line()
         extra_selections = []
 
-        # Update linting error color to be less aggressive
         for error in lint_data:
             line_number = error.get('line') - 1
-            message = error.get('message')
-            self.lint_errors[line_number] = message
+            self.lint_errors[line_number] = error.get('message')
 
-            # Create an extra selection for lint error highlighting
             selection = QTextEdit.ExtraSelection()
-            error_color = QColor("#FFD700")  # Light yellow color for a more subtle background
-            selection.format.setBackground(error_color)
+            selection.format.setBackground(QColor("#FFD700"))
             selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-
-            # Move cursor to the problematic line
-            cursor = self.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)  # Start at the beginning
-            for _ in range(line_number):
-                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.MoveAnchor)
-
-            # Apply selection to the specific problematic line
+            cursor = self._get_cursor_at_line(line_number)
             selection.cursor = cursor
             selection.cursor.clearSelection()
-
             extra_selections.append(selection)
 
         self.setExtraSelections(extra_selections)
 
+    def _get_cursor_at_line(self, line_number):
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        for _ in range(line_number):
+            cursor.movePosition(QTextCursor.MoveOperation.Down)
+        return cursor
+
     def update_line_number_area_width(self, _):
-        """Update the viewport margins for the line number area."""
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
     def update_line_number_area(self, rect, dy):
-        """Update the line number area when scrolling or when text changes."""
         if dy:
             self.lineNumberArea.scroll(0, dy)
         else:
@@ -181,21 +162,17 @@ class CodeEditor(QPlainTextEdit):
             self.update_line_number_area_width(0)
 
     def line_number_area_width(self):
-        """Calculate the width required for the line number area."""
         digits = len(str(max(1, self.blockCount())))
-        space = 3 + self.fontMetrics().horizontalAdvance('9') * digits
-        return space
+        return 3 + self.fontMetrics().horizontalAdvance('9') * digits
 
     def resizeEvent(self, event):
-        """Handle resizing events."""
         super().resizeEvent(event)
         cr = self.contentsRect()
         self.lineNumberArea.setGeometry(QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height()))
 
     def line_number_area_paint_event(self, event):
-        """Paint the line number area."""
         painter = QPainter(self.lineNumberArea)
-        painter.fillRect(event.rect(), QColor("#2b2b2b"))  # Background color
+        painter.fillRect(event.rect(), QColor("#2b2b2b"))
 
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
@@ -205,111 +182,78 @@ class CodeEditor(QPlainTextEdit):
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 number = str(block_number + 1)
-                painter.setPen(QColor("#FFFFFF"))  # Line number color
+                painter.setPen(QColor("#FFFFFF"))
                 painter.drawText(0, top, self.lineNumberArea.width(), self.fontMetrics().height(),
                                  Qt.AlignmentFlag.AlignRight, number)
-
             block = block.next()
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
 
     def highlight_current_line(self):
-        """Highlight the current line where the cursor is."""
         extra_selections = []
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
-            line_color = QColor("#3b3b3b")
-            selection.format.setBackground(line_color)
+            selection.format.setBackground(QColor("#3b3b3b"))
             selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             selection.cursor = self.textCursor()
             selection.cursor.clearSelection()
             extra_selections.append(selection)
         self.setExtraSelections(extra_selections)
 
-    def show_signature_help(self):
-        """Display signature help (e.g., function parameters) as a tooltip."""
+    def keyPressEvent(self, event):
+        super().keyPressEvent(event)
+        if event.text() == "(":
+            self._show_signature_help()
+        if event.text() in (".", "(", "[", "{"):
+            self._handle_autocompletion()
+
+    def _show_signature_help(self):
         cursor = self.textCursor()
-        position = cursor.position()
-        line = cursor.blockNumber() + 1
-        column = cursor.columnNumber()
-
         source_code = self.toPlainText()
-
         try:
-            # Use Jedi to get the signature for the function call at the current cursor position
             script = jedi.Script(source_code)
-            signatures = script.get_signatures(line=line, column=column)
-
+            signatures = script.get_signatures(line=cursor.blockNumber() + 1, column=cursor.columnNumber())
             if signatures:
-                # Get the signature information to display
                 signature = signatures[0]
                 params = ', '.join(param.name for param in signature.params)
-                signature_text = f"{signature.name}({params})"
-
-                # Show a tooltip near the cursor with the signature information
-                cursor_rect = self.cursorRect(cursor)
-                QToolTip.showText(self.mapToGlobal(cursor_rect.topRight()), signature_text, self)
+                QToolTip.showText(self.mapToGlobal(self.cursorRect(cursor).topRight()),
+                                  f"{signature.name}({params})", self)
         except Exception as e:
             print(f"Error in show_signature_help: {e}")
 
-    def keyPressEvent(self, event):
-        """Override keyPressEvent to capture key presses for autocompletion and signature help."""
-        super().keyPressEvent(event)
-
-        if event.text() == "(":
-            self.show_signature_help()
-
-        if event.text() in (".", "(", "[", "{"):
-            self.handle_autocompletion()
-
     def insert_completion(self, completion):
-        """Insert the selected completion into the editor."""
         cursor = self.textCursor()
         cursor.select(QTextCursor.SelectionType.WordUnderCursor)
         cursor.insertText(completion)
         self.setTextCursor(cursor)
 
-    def handle_autocompletion(self):
-        """Handle the logic for showing autocompletion suggestions by using a background thread."""
-        self.initialize_autocompleter()  # Ensure autocompleter is initialized
+    def _handle_autocompletion(self):
+        self._initialize_autocompleter()
         cursor = self.textCursor()
-        position = cursor.position()
-        line = cursor.blockNumber() + 1
-        column = cursor.columnNumber()
-
         source = self.toPlainText()
-
-        # Trigger Jedi to analyze and fetch completions
-        if not source or not source[position - 1].isidentifier() and source[position - 1] != '.':
+        if not source or not source[cursor.position() - 1].isidentifier() and source[cursor.position() - 1] != '.':
             self.completer.popup().hide()
             return
+        self.executor.submit(self._get_completions, source, cursor.blockNumber() + 1, cursor.columnNumber())
 
-        self.executor.submit(self.get_completions, source, line, column)
-
-    def get_completions(self, source, line, column):
-        """Use Jedi to get completions in a background thread."""
+    def _get_completions(self, source, line, column):
         try:
             script = jedi.Script(code=source, path='<stdin>')
             completions = script.complete(line=line, column=column)
-
-            completion_suggestions = [completion.name for completion in completions]
-            completion_docs = [completion.docstring() for completion in completions]
-
-            self.worker_signals.completion_ready.emit(completion_suggestions, completion_docs)
+            self.worker_signals.completion_ready.emit(
+                [completion.name for completion in completions],
+                [completion.docstring() for completion in completions]
+            )
         except Exception as e:
             print(f"Jedi Error in get_completions: {e}")
 
-    def show_completions(self, completion_suggestions, completion_docs):
-        """Update the UI with completion suggestions."""
+    def show_completions(self, completion_suggestions, _):
         if not completion_suggestions:
             self.completer.popup().hide()
             return
-
         model = QStringListModel(completion_suggestions, self.completer)
         self.completer.setModel(model)
-
-        self.completion_docs = completion_docs
         rect = self.cursorRect()
         rect.setWidth(self.completer.popup().sizeHintForColumn(0) + self.completer.popup().verticalScrollBar().sizeHint().width())
         self.completer.complete(rect)
