@@ -4,12 +4,12 @@ import sys  # Ensure sys is imported for subprocess handling
 import jedi
 import subprocess
 import os
+import time  # For adding a delay to ensure subprocess completes
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QCompleter, QToolTip, QMessageBox
 from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QTextCharFormat
 from PyQt6.QtCore import QRect, QSize, Qt, QStringListModel, pyqtSignal, QObject, QTimer, QThread
 from concurrent.futures import ThreadPoolExecutor
 from .syntax_highlighter import PythonSyntaxHighlighter
-
 
 class LineNumberArea(QWidget):
     def __init__(self, editor):
@@ -21,7 +21,6 @@ class LineNumberArea(QWidget):
 
     def paintEvent(self, event):
         self.code_editor.line_number_area_paint_event(event)
-
 
 class CompletionWorkerSignals(QObject):
     """Signals to be emitted by the background thread worker to update the UI."""
@@ -38,12 +37,12 @@ class LintWorker(QThread):
         self.temp_filename = temp_filename
 
     def run(self):
-        # Write code to a temporary file for linting
-        with open(self.temp_filename, "w") as temp_file:
-            temp_file.write(self.code)
-
-        # Run pylint on the temporary file
         try:
+            # Write code to a temporary file for linting
+            with open(self.temp_filename, "w") as temp_file:
+                temp_file.write(self.code)
+
+            # Run pylint on the temporary file
             result = subprocess.run(
                 ['pylint', self.temp_filename, '--output-format', 'json'],
                 stdout=subprocess.PIPE,
@@ -54,11 +53,26 @@ class LintWorker(QThread):
                 import json
                 lint_data = json.loads(lint_output)
                 self.lint_result.emit(lint_data)
+
         except Exception as e:
             print(f"Linting error: {e}")
+
         finally:
-            if os.path.exists(self.temp_filename):
-                os.remove(self.temp_filename)
+            # Add a small delay to ensure the file is not in use anymore
+            time.sleep(0.1)
+            # Ensure the temporary file is removed if it exists
+            try:
+                if os.path.exists(self.temp_filename):
+                    os.remove(self.temp_filename)
+            except PermissionError:
+                # Handle the case where the file cannot be removed immediately
+                print(f"PermissionError: Could not delete '{self.temp_filename}'. Will try again shortly.")
+                time.sleep(0.5)  # Additional delay to allow pylint to release the file
+                try:
+                    if os.path.exists(self.temp_filename):
+                        os.remove(self.temp_filename)
+                except Exception as e:
+                    print(f"Failed to delete temporary file '{self.temp_filename}': {e}")
 
 
 class CodeEditor(QPlainTextEdit):

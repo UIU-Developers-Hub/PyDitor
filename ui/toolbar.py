@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt
 class Toolbar(QToolBar):
     def __init__(self, parent):
         super().__init__("Toolbar", parent)
-        self.parent = parent
+        self.parent_widget = parent  # Store a reference to the parent (AICompilerMainWindow)
         self.setMovable(False)
         self.setStyleSheet("""
             QToolBar {
@@ -39,30 +39,30 @@ class Toolbar(QToolBar):
         # Create New File
         new_file_action = QAction("New File", self)
         new_file_action.setShortcut("Ctrl+N")
-        new_file_action.triggered.connect(self.parent.add_new_tab)
+        new_file_action.triggered.connect(self.parent_widget.add_new_tab)
         file_menu_action.addAction(new_file_action)
 
         # Open File
         open_file_action = QAction("Open File", self)
         open_file_action.setShortcut("Ctrl+O")
-        open_file_action.triggered.connect(self.parent.open_file)
+        open_file_action.triggered.connect(self.parent_widget.open_file)  # Correct reference
         file_menu_action.addAction(open_file_action)
 
         # Create New Folder
         new_folder_action = QAction("New Folder", self)
         new_folder_action.setShortcut("Ctrl+Shift+N")
-        new_folder_action.triggered.connect(self.parent.create_new_folder)
+        new_folder_action.triggered.connect(self.parent_widget.create_new_folder)
         file_menu_action.addAction(new_folder_action)
 
         # Open Folder
         open_folder_action = QAction("Open Folder", self)
         open_folder_action.setShortcut("Ctrl+Shift+O")
-        open_folder_action.triggered.connect(self.parent.open_folder)
+        open_folder_action.triggered.connect(self.parent_widget.open_folder)
         file_menu_action.addAction(open_folder_action)
 
         # Recently Opened Files
         recent_files_action = QAction("Recently Opened", self)
-        recent_files_action.triggered.connect(self.parent.show_recent_files)
+        recent_files_action.triggered.connect(self.parent_widget.show_recent_files)
         file_menu_action.addAction(recent_files_action)
 
         # Add File Menu Button to Toolbar
@@ -71,13 +71,13 @@ class Toolbar(QToolBar):
         # Run Code Button
         run_action = QAction("Run Code", self)
         run_action.setShortcut("Ctrl+R")
-        run_action.triggered.connect(self.parent.run_code)
+        run_action.triggered.connect(self.parent_widget.run_code)
         self.addAction(run_action)
 
         # Debugger Button
         debug_action = QAction("Start Debugger", self)
         debug_action.setShortcut("Ctrl+Shift+D")
-        debug_action.triggered.connect(self.parent.start_debugger)
+        debug_action.triggered.connect(self.parent_widget.start_debugger)
         self.addAction(debug_action)
 
         # Separator for better UI grouping
@@ -94,7 +94,7 @@ class Toolbar(QToolBar):
 
         for snippet_name, snippet_code in snippets.items():
             snippet_action = QAction(snippet_name, self)
-            snippet_action.triggered.connect(lambda checked, code=snippet_code: self.parent.insert_snippet(code))
+            snippet_action.triggered.connect(lambda checked, code=snippet_code: self.parent_widget.insert_snippet(code))
             snippets_menu.addAction(snippet_action)
 
         # Add snippets dropdown to toolbar
@@ -106,6 +106,5 @@ class Toolbar(QToolBar):
         # Add New Tab Button
         new_tab_action = QAction("New Tab", self)
         new_tab_action.setShortcut("Ctrl+T")
-        new_tab_action.triggered.connect(self.parent.add_new_tab)
+        new_tab_action.triggered.connect(self.parent_widget.add_new_tab)
         self.addAction(new_tab_action)
-
