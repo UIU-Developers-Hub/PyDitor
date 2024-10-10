@@ -1,55 +1,97 @@
-# File: ui/main_window.py
-
 import os
 import pickle
 import json
 import subprocess
 import sys
-
+import tempfile
+import logging
+from PyQt6.QtCore import QTimer
+from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QPlainTextEdit, QFileDialog,
     QVBoxLayout, QWidget, QHBoxLayout, QSplitter,
     QTreeView, QLineEdit, QStatusBar, QDockWidget, QApplication, QMenu, QInputDialog, QMessageBox, QToolBar, QPushButton, QFontDialog
 )
-from PyQt6.QtGui import QFont, QColor, QAction, QShortcut, QKeySequence
-from PyQt6.QtCore import Qt, QThreadPool, QRunnable, pyqtSignal, QObject, QTimer
-from PyQt6.QtGui import QFileSystemModel
+from PyQt6.QtGui import QFont, QAction, QShortcut, QKeySequence, QFileSystemModel
+from PyQt6.QtCore import Qt, pyqtSignal, QObject
 
+# Importing your custom modules
 from ui.toolbar import Toolbar
 from runner.code_runner_thread import CodeRunnerThread
 from runner.debugger_thread import DebuggerThread
 from ui.documentation_sidebar import DocumentationSidebar
-from ui.code_editor import CodeEditor
-
+from ui.code_editor import CodeEditor  # Replace with custom editor class
 
 class Signals(QObject):
     output_received = pyqtSignal(str)
     error_received = pyqtSignal(str)
 
 
-class CodeRunnerRunnable(QRunnable):
+class CodeRunnerRunnable:
     def __init__(self, code, input_value, signals):
-        super().__init__()
         self.code = code
         self.input_value = input_value
         self.signals = signals
+        self.temp_filename = None
 
     def run(self):
         try:
-            command = [sys.executable, '-c', self.code]
-            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            output, error = process.communicate(input=self.input_value.encode())
+            # Step 1: Create and write the code to a temporary file
+            with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
+                self.temp_filename = temp_file.name  # Store the file name for later deletion
+                temp_file.write(self.code.encode())  # Write the code into the file
 
+            # Step 2: Run the temporary file as a subprocess
+            process = subprocess.Popen(
+                [sys.executable, self.temp_filename],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            # Wait for the process to finish and capture the output/error
+            output, error = process.communicate(input=self.input_value)
+
+            # Step 3: Emit output and error signals
             if output:
-                self.signals.output_received.emit(output.decode('utf-8'))
+                self.signals.output_received.emit(output)
             if error:
-                self.signals.error_received.emit(error.decode('utf-8'))
+                self.signals.error_received.emit(error)
+
         except Exception as e:
-            self.signals.error_received.emit(str(e))
+            # Step 4: Handle any runtime errors
+            self.signals.error_received.emit(f"Exception occurred: {str(e)}")
 
+        finally:
+            # Step 5: Ensure all file handles are closed before attempting to delete the file
+            self._delete_temp_file()
 
+    def _delete_temp_file(self):
+        """Retry deleting the temporary file with multiple attempts and delays."""
+        max_retries = 5  # Number of retries for file deletion
+        retry_delay = 1   # Time in seconds between retries
+
+        for attempt in range(max_retries):
+            try:
+                # Ensure that the temp file exists and then try to delete it
+                if self.temp_filename and os.path.exists(self.temp_filename):
+                    os.remove(self.temp_filename)  # Attempt to delete the file
+                    logging.debug(f"Successfully removed temporary file: {self.temp_filename}")
+                    break  # Exit the loop if deletion is successful
+            except PermissionError as e:
+                # Log a warning and retry after a short delay if the file is locked or in use
+                logging.warning(f"PermissionError: Could not delete temp file '{self.temp_filename}' on attempt {attempt + 1}. Retrying...")
+                time.sleep(retry_delay)  # Wait before retrying
+            except Exception as e:
+                # Log any other errors and retry after a delay
+                logging.error(f"Error deleting temp file '{self.temp_filename}' on attempt {attempt + 1}: {e}")
+                time.sleep(retry_delay)
+
+        else:
+            # If all attempts to delete the file fail, log an error message
+            logging.error(f"Failed to delete temporary file '{self.temp_filename}' after {max_retries} attempts.")
 class AICompilerMainWindow(QMainWindow):
-    # Constants for autosave and session file paths
     RECENT_FILES_LIMIT = 5
     RECENT_FILES_PATH = "recent_files.pkl"
     SETTINGS_PATH = "user_settings.json"
@@ -59,21 +101,15 @@ class AICompilerMainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Data Science Code Visualization")
         self.setGeometry(100, 100, 1200, 800)
-        self.load_user_settings()
+        self.thread_pool = ThreadPoolExecutor(max_workers=5)  # ThreadPoolExecutor for background tasks
+        self.previous_tab_index = None  # Track the previously selected tab
+        self.modified_tabs = set()  # Track modified tabs for session restoration
+
         self.setup_ui()
         self.setup_shortcuts()
-        self.thread_pool = QThreadPool()
-
-        # Start autosave timer
-        self.autosave_timer = QTimer(self)
-        self.autosave_timer.timeout.connect(self.autosave)
-        self.autosave_timer.start(10000)  # Autosave every 10 seconds
-
-        # Restore the last session
         self.restore_session()
 
     def setup_ui(self):
-        # Applying a consistent dark theme with contrast
         self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
         self.recent_files = self.load_recent_files()
 
@@ -96,7 +132,6 @@ class AICompilerMainWindow(QMainWindow):
         self.debugger_toolbar = QToolBar("Debugger", self)
         self.addToolBar(self.debugger_toolbar)
 
-        # Add Debugger Actions
         self.start_debugger_action = QAction("Start Debugger", self)
         self.start_debugger_action.triggered.connect(self.start_debugger)
         self.debugger_toolbar.addAction(self.start_debugger_action)
@@ -130,7 +165,7 @@ class AICompilerMainWindow(QMainWindow):
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
-        self.tab_widget.currentChanged.connect(self.highlight_active_tab)
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)  # Track tab change
         self.add_new_tab()  # Add an initial tab
 
         # Layout for the right-hand side splitter
@@ -144,6 +179,8 @@ class AICompilerMainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         self.setup_io_tabs(right_splitter)
+
+        # Initialize and set the QStatusBar
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
 
@@ -174,6 +211,7 @@ class AICompilerMainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+S"), self, activated=self.save_file)
         QShortcut(QKeySequence("Ctrl+Shift+R"), self, activated=self.run_code)
         QShortcut(QKeySequence("Ctrl+Shift+D"), self, activated=self.start_debugger)
+
     def run_tests(self):
         """Run unit tests from the current editor."""
         current_editor = self.tab_widget.currentWidget()
@@ -204,6 +242,7 @@ class AICompilerMainWindow(QMainWindow):
                     os.remove(temp_filename)
                 except Exception as e:
                     self.output_text.appendPlainText(f"Error removing temp file: {str(e)}")
+
     def open_file(self):
         """Open a file using a file dialog."""
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
@@ -224,20 +263,15 @@ class AICompilerMainWindow(QMainWindow):
             content = file.read()
         new_editor = CodeEditor()
         new_editor.setPlainText(content)
+        new_editor.file_path = file_path  # Track file path for autosave
         tab_index = self.tab_widget.addTab(new_editor, os.path.basename(file_path))
         self.tab_widget.setCurrentIndex(tab_index)
         self.statusBar.showMessage(f"Opened: {file_path}", 3000)
 
-    def open_file(self):
-        """Open a file using a file dialog."""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
-        if file_path:
-            self.load_file(file_path)
-            self.add_to_recent_files(file_path)
-
     def add_new_tab(self):
         """Add a new code editor tab."""
         new_editor = CodeEditor()
+        new_editor.file_path = None  # Initialize file_path as None for new (unsaved) tabs
         new_editor.setFont(QFont("Courier New", 14))
         tab_index = self.tab_widget.addTab(new_editor, "Untitled")
         self.tab_widget.setCurrentIndex(tab_index)
@@ -255,18 +289,6 @@ class AICompilerMainWindow(QMainWindow):
                 elif reply == QMessageBox.StandardButton.Cancel:
                     return
         self.tab_widget.removeTab(index)
-
-    def highlight_active_tab(self):
-        """Highlight the active tab in a distinct color using stylesheets."""
-        tab_bar: QTabBar = self.tab_widget.tabBar()
-        for index in range(self.tab_widget.count()):
-            if index == self.tab_widget.currentIndex():
-                # Set active tab style
-                tab_bar.setTabTextColor(index, QColor("yellow"))
-            else:
-                # Set inactive tab style
-                tab_bar.setTabTextColor(index, QColor("white"))
-
 
     def add_to_recent_files(self, file_path):
         """Add a file path to the recent files list."""
@@ -329,13 +351,6 @@ class AICompilerMainWindow(QMainWindow):
             except Exception as e:
                 self.statusBar.showMessage(f"Error creating folder: {e}", 3000)
 
-    def open_file(self):
-        """Open a file using a file dialog."""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
-        if file_path:
-            self.load_file(file_path)
-            self.add_to_recent_files(file_path)
-
     def open_folder(self):
         """Open a folder and set it as the root for the file explorer."""
         folder_path = QFileDialog.getExistingDirectory(self, "Open Folder", "")
@@ -356,9 +371,7 @@ class AICompilerMainWindow(QMainWindow):
 
                         new_editor = CodeEditor()
                         new_editor.setPlainText(content)
-                        if file_path:
-                            new_editor.file_path = file_path
-
+                        new_editor.file_path = file_path  # Track file path
                         tab_index = self.tab_widget.addTab(new_editor, os.path.basename(file_path) if file_path else "Untitled")
                         self.tab_widget.setCurrentIndex(tab_index)
 
@@ -368,28 +381,28 @@ class AICompilerMainWindow(QMainWindow):
             except Exception as e:
                 print(f"Failed to restore session: {str(e)}")
 
-    def autosave(self):
-        """Save open tabs periodically to prevent data loss."""
-        try:
-            session_data = {
-                "open_files": [],
-                "current_tab_index": self.tab_widget.currentIndex(),
-            }
+    def autosave(self, tab_index):
+        """Autosave only tabs that have been previously saved to a file."""
+        editor = self.tab_widget.widget(tab_index)
+        if isinstance(editor, CodeEditor) and hasattr(editor, 'file_path') and editor.file_path:
+            self._save_tab_content(tab_index)
 
-            # Iterate over all open tabs and save content
-            for index in range(self.tab_widget.count()):
-                editor = self.tab_widget.widget(index)
-                if isinstance(editor, CodeEditor):
-                    session_data["open_files"].append({
-                        "content": editor.toPlainText(),
-                        "file_path": editor.file_path if hasattr(editor, "file_path") else None,
-                    })
+    def _save_tab_content(self, tab_index):
+        """Save the content of the given tab."""
+        editor = self.tab_widget.widget(tab_index)
+        if editor.file_path:
+            try:
+                with open(editor.file_path, 'w') as file:
+                    file.write(editor.toPlainText())
+                self.statusBar.showMessage(f"Autosaved: {editor.file_path}", 2000)
+            except Exception as e:
+                self.statusBar.showMessage(f"Error saving {editor.file_path}: {str(e)}", 5000)
 
-            with open(self.SESSION_PATH, 'w') as session_file:
-                json.dump(session_data, session_file)
-
-        except Exception as e:
-            print(f"Failed to autosave session: {str(e)}")
+    def on_tab_changed(self, index):
+        """Handle autosave on tab change."""
+        if self.previous_tab_index is not None and self.previous_tab_index != index:
+            self.autosave(self.previous_tab_index)
+        self.previous_tab_index = index
 
     def run_code(self):
         """Run the code from the current editor and show the output tab automatically."""
@@ -402,12 +415,12 @@ class AICompilerMainWindow(QMainWindow):
                 self.statusBar.showMessage("Error: No code to run!", 3000)
                 return
 
-            # Run the code using QRunnable for threading
             signals = Signals()
             signals.output_received.connect(self.handle_output)
             signals.error_received.connect(self.handle_error)
+
             runnable = CodeRunnerRunnable(code, input_value, signals)
-            self.thread_pool.start(runnable)
+            self.thread_pool.submit(runnable.run)
 
             # Show the output tab automatically
             self.io_tabs.setCurrentIndex(1)
@@ -463,39 +476,13 @@ class AICompilerMainWindow(QMainWindow):
         """Handle errors from the code runner or debugger."""
         self.output_text.appendPlainText(error)
 
-    def load_user_settings(self):
-        """Load user settings from a file."""
-        if os.path.exists(self.SETTINGS_PATH):
-            with open(self.SETTINGS_PATH, 'r') as file:
-                settings = json.load(file)
-                self.apply_user_settings(settings)
-
-    def apply_user_settings(self, settings):
-        """Apply user settings to the UI."""
-        if "theme" in settings and settings["theme"] == "dark":
-            self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
-        else:
-            self.setStyleSheet("background-color: rgba(255, 255, 255, 0.85); color: black;")
-
-    def save_user_settings(self):
-        """Save the current user settings."""
-        settings = {"theme": "dark" if self.styleSheet().find("#1e1e1e") != -1 else "light"}
-        with open(self.SETTINGS_PATH, 'w') as file:
-            json.dump(settings, file)
-
-    def close_tab(self, index):
-        """Prompt to save before closing a tab if there are unsaved changes."""
-        current_editor = self.tab_widget.widget(index)
-        if isinstance(current_editor, CodeEditor):
-            if current_editor.document().isModified():
-                reply = QMessageBox.question(self, 'Unsaved Changes',
-                                         "This document has unsaved changes. Do you want to save them?",
-                                         QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
-                if reply == QMessageBox.StandardButton.Save:
-                    self.save_file()
-                elif reply == QMessageBox.StandardButton.Cancel:
-                    return  # Cancel closing the tab
-        self.tab_widget.removeTab(index)
+    def closeEvent(self, event):
+        """Ensure all threads are stopped before closing the application."""
+        if self.previous_tab_index is not None:
+            # Save the current tab before closing the application
+            self._save_tab_content(self.previous_tab_index)
+        self.thread_pool.shutdown(wait=True)  # Properly shut down thread pool to avoid errors
+        event.accept()  # Proceed with closing the window
 
 
 # Main entry point
