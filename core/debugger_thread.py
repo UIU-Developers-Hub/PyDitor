@@ -1,4 +1,4 @@
-#runner\debugger_thread.py
+#core\debugger_thread.py
 
 import sys
 import subprocess

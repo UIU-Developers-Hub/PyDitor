@@ -1,4 +1,4 @@
-# File: runner/lint_worker.py
+# File: core/lint_worker.py
 
 import tempfile
 import subprocess

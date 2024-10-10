@@ -17,8 +17,8 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject
 
 # Importing your custom modules
 from ui.toolbar import Toolbar
-from runner.code_runner_thread import CodeRunnerThread
-from runner.debugger_thread import DebuggerThread
+from core.code_runner_thread import CodeRunnerThread
+from core.debugger_thread import DebuggerThread
 from ui.documentation_sidebar import DocumentationSidebar
 from ui.code_editor import CodeEditor  # Replace with custom editor class
 
