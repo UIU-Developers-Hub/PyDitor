@@ -55,7 +55,7 @@ Git for cloning the repository.
 The updated Future Work section includes integration with AI, Firebase, and Docker, along with capabilities for remote code execution, a plugin system, and real-time collaboration tools. This future scope aims to make the IDE even more powerful, collaborative, and adaptable to different user needs.
 Authors 
 GitHub: Sifat Ali
-Email: sifatali0051email@example.com
+Email: sifatali0051gmail@.com
 
 License
 This project is licensed under the MIT License. You are free to use, modify, and distribute this software. See the LICENSE file for full license details.
