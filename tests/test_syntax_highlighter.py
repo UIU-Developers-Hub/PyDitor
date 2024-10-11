@@ -1,3 +1,5 @@
+# File: tests/test_syntax_highlighter.py
+
 import unittest
 from ui.syntax_highlighter import PythonSyntaxHighlighter
 from PyQt6.QtGui import QTextDocument

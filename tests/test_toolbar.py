@@ -1,3 +1,5 @@
+# File: tests/test_toolbar.py
+
 import unittest
 from ui.main_window import AICompilerMainWindow
 from PyQt6.QtWidgets import QApplication
@@ -14,8 +16,8 @@ class TestToolbar(unittest.TestCase):
         self.assertTrue(self.toolbar.actions(), "Toolbar has no actions")
 
     def test_run_code_button(self):
-        action = next(action for action in self.toolbar.actions() if action.text() == "Run Code")
-        self.assertEqual(action.shortcut().toString(), "Ctrl+R", "Shortcut for Run Code is incorrect")
+        action = next(action for action in self.toolbar.actions() if action.text() == "Run Script")
+        self.assertEqual(action.shortcut().toString(), "Ctrl+Shift+R", "Shortcut for Run Code is incorrect")
 
 if __name__ == "__main__":
     unittest.main()

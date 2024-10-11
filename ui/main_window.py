@@ -1,3 +1,4 @@
+import sys
 import os
 import json
 import logging
@@ -10,12 +11,13 @@ from PyQt6.QtWidgets import (
     QInputDialog, QMessageBox, QToolBar, QFontDialog
 )
 from PyQt6.QtGui import QFont, QAction, QShortcut, QKeySequence, QFileSystemModel
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThreadPool
 
 from ui.toolbar import Toolbar
 from core.code_runner_thread import CodeRunnerThread, Signals
 from ui.documentation_sidebar import DocumentationSidebar
 from ui.code_editor import CodeEditor
+from core.debugger_thread import DebuggerThread  # Ensure this is properly imported
 
 # Set Jedi's log level to a higher level to suppress debug messages
 logging.getLogger('jedi').setLevel(logging.INFO)
@@ -243,15 +245,19 @@ class AICompilerMainWindow(QMainWindow):
             file_path = current_editor.file_path
             self.statusBar().showMessage(f"Running: {file_path}", 3000)
 
+            # Clear previous output before running
+            self.output_text.clear()
+
+            # Switch to the "Output" tab automatically
+            self.io_tabs.setCurrentIndex(1)  # Switch to the "Output" tab
+
             signals = Signals()
             signals.output_received.connect(self.handle_output)
             signals.error_received.connect(self.handle_error)
 
             # Pass the saved file path to the runner
             runnable = CodeRunnerThread(file_path, self.input_field.text().strip(), signals)
-            self.thread_pool.submit(runnable.run)
-
-            self.io_tabs.setCurrentIndex(1)
+            self.thread_pool.start(runnable)  # Use the thread pool to start the runnable
 
     def run_tests(self):
         """Run unit tests from the current editor."""
@@ -418,11 +424,33 @@ class AICompilerMainWindow(QMainWindow):
                 self.statusBar().showMessage("Error: No code to debug!", 3000)
                 return
 
+            # Clear previous output before starting the debugger
+            self.output_text.clear()
+
+            # Switch to the "Output" tab automatically
+            self.io_tabs.setCurrentIndex(1)  # This will switch to the "Output" tab
+
+            # Check if a previous debugger thread is running and stop it
+            if hasattr(self, 'debugger_thread') and self.debugger_thread.isRunning():
+                self.debugger_thread.terminate()
+                self.debugger_thread.wait()  # Ensure it stops before starting a new one
+
+            # Start the DebuggerThread
             self.debugger_thread = DebuggerThread(code)
             self.debugger_thread.output_received.connect(self.handle_output)
             self.debugger_thread.error_received.connect(self.handle_error)
             self.debugger_thread.start()
-            current_editor.set_debugger_thread(self.debugger_thread)
+            logging.info("Debugger started for new code session")
+
+    def handle_output(self, output):
+        """Handle the output received from running the tests or code."""
+        self.output_text.appendPlainText(output)  # Display the output in the Output tab
+        self.statusBar().showMessage(output, 3000)
+
+    def handle_error(self, error):
+        """Handle the error received from running the tests or code."""
+        self.output_text.appendPlainText(f"Error: {error}")  # Display the error in the Output tab
+        self.statusBar().showMessage(f"Error: {error}", 3000)
 
     def continue_debugger(self):
         """Continue the execution in the debugger."""

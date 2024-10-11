@@ -1,3 +1,5 @@
+# File: tests/test_documentation_sidebar.py
+
 import unittest
 from ui.documentation_sidebar import DocumentationSidebar
 from PyQt6.QtWidgets import QApplication
@@ -9,9 +11,11 @@ class TestDocumentationSidebar(unittest.TestCase):
     def setUp(self):
         self.sidebar = DocumentationSidebar()
 
-    def test_fetch_documentation(self):
-        self.sidebar.fetch_documentation("def")
-        self.assertIn("def", self.sidebar.text_area.toPlainText(), "Documentation not fetched properly")
+    def test_set_widget_content(self):
+        """Test setting content in the documentation sidebar."""
+        content = "def test_function():\n    pass"
+        self.sidebar.set_widget_content(content)
+        self.assertIn("test_function", self.sidebar.text_browser.toPlainText(), "Documentation content not set correctly.")
 
 if __name__ == "__main__":
     unittest.main()

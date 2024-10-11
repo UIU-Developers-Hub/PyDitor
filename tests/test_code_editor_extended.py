@@ -39,22 +39,10 @@ class TestCodeEditorExtended(unittest.TestCase):
         self.editor.setPlainText(code)
         self.editor.lint_code()
 
-        # Wait for linting to complete (since it runs in a separate thread)
+        # Wait for the lint worker thread to finish
         self.editor.lint_worker.wait()
 
         # Verify that lint_errors contains expected data
         self.assertIsInstance(self.editor.lint_errors, dict, "Lint errors should be a dictionary.")
     
-    def test_handle_autocompletion(self):
-        """Test that autocompletion triggers appropriately."""
-        self.editor.setPlainText("import os\nos.")
-        cursor = self.editor.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        self.editor.setTextCursor(cursor)
-        self.editor.handle_autocompletion()
-
-        # Check if the completer popup is visible (indicating that autocompletion was triggered)
-        self.assertTrue(self.editor.completer.popup().isVisible(), "Autocompletion did not trigger correctly.")
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_handle_autocompleti

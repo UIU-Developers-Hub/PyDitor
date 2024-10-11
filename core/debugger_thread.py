@@ -1,10 +1,9 @@
-# File: core/debugger_thread.py
-
-import sys
+import sys  # Ensure this import is present
 import subprocess
 import queue
 import threading
 import logging
+import os
 from PyQt6.QtCore import QThread, pyqtSignal
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,6 +18,7 @@ class DebuggerThread(QThread):
         self.code = code
         self.command_queue = queue.Queue()
         self.running = True
+        self.process = None
 
     def run(self):
         temp_filename = "temp_debug_script.py"
@@ -31,23 +31,26 @@ class DebuggerThread(QThread):
 
             # Start pdb in a subprocess
             self.process = subprocess.Popen(
-                [sys.executable, "-m", "pdb", temp_filename],
+                [sys.executable, "-m", "pdb", temp_filename],  # Correctly pass the temporary filename to pdb
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
 
+            # Start a thread to handle input to the debugger
             input_thread = threading.Thread(target=self.process_input)
             input_thread.daemon = True
             input_thread.start()
 
+            # Read and emit output from the debugger
             for line in iter(self.process.stdout.readline, ''):
                 if line:
                     self.output_received.emit(line)
 
             self.process.stdout.close()
             self.process.wait()
+
         except Exception as e:
             self.error_received.emit(str(e))
             logging.error(f"Debugger error: {str(e)}")
@@ -60,6 +63,7 @@ class DebuggerThread(QThread):
                 os.remove(temp_filename)
 
     def process_input(self):
+        """Handle input to the debugger process."""
         while self.running:
             try:
                 command = self.command_queue.get(timeout=1)

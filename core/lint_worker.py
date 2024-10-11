@@ -1,6 +1,8 @@
+# File: core/lint_worker.py
+
 import subprocess
-from PyQt6.QtCore import QThread, pyqtSignal
 import logging
+from PyQt6.QtCore import QThread, pyqtSignal
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -10,6 +12,7 @@ class LintWorker(QThread):
     def __init__(self, code):
         super().__init__()
         self.code = code
+        self.process = None  # Track the process
 
     def run(self):
         try:
@@ -20,16 +23,20 @@ class LintWorker(QThread):
                 self.lint_result.emit(lint_data)
         except Exception as e:
             logging.error(f"Linting error: {e}")
+        finally:
+            self._terminate_and_cleanup()
 
     def _run_flake8(self):
         """Run flake8 on the code using stdin."""
-        result = subprocess.run(
+        self.process = subprocess.Popen(
             ['flake8', '--stdin-display-name', 'code.py', '-'],
-            input=self.code.encode(),
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            text=True
         )
-        return result.stdout.decode('utf-8')
+        output, _ = self.process.communicate(input=self.code)
+        return output
 
     def _parse_flake8_output(self, lint_output):
         """Parse the flake8 output."""
@@ -43,3 +50,20 @@ class LintWorker(QThread):
                         "message": parts[2].strip(),
                     })
         return lint_errors
+
+    def _terminate_and_cleanup(self):
+        """Ensure the process is terminated."""
+        if self.process:
+            try:
+                if self.process.poll() is None:  # Check if the process is still running
+                    self.process.terminate()     # Attempt to terminate gracefully
+                    self.process.wait(3)         # Wait for it to terminate
+            except subprocess.TimeoutExpired:
+                self.process.kill()              # Force kill if it takes too long
+
+    def stop(self):
+        """Gracefully stop the thread."""
+        if self.process and self.process.poll() is None:
+            self.process.terminate()  # Try to stop the running process
+        self.terminate()  # Stop the thread
+        self.wait()  # Wait for the thread to exit

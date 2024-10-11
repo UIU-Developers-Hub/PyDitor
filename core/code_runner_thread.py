@@ -64,5 +64,7 @@ class CodeRunnerThread(QThread):
 
     def stop(self):
         """Gracefully stop the thread."""
-        self.terminate()
-        self.wait()
+        if self.process and self.process.poll() is None:
+            self.process.terminate()  # Try to stop the running process
+        self.terminate()  # Stop the thread
+        self.wait()  # Wait for the thread to exit
