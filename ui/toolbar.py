@@ -1,7 +1,5 @@
-# File: ui/toolbar.py
-
-from PyQt6.QtWidgets import QToolBar, QMenu, QFileDialog, QInputDialog
-from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import QToolBar, QMenu
+from PyQt6.QtGui import QAction  # Import QAction from PyQt6.QtGui
 from PyQt6.QtCore import Qt
 
 class Toolbar(QToolBar):
@@ -9,27 +7,30 @@ class Toolbar(QToolBar):
         super().__init__("Toolbar", parent)
         self.parent_widget = parent  # Store a reference to the parent (AICompilerMainWindow)
         self.setMovable(False)
+
+        # Toolbar styling
         self.setStyleSheet("""
             QToolBar {
-                spacing: 15px; /* Spacing between buttons */
-                background-color: #2e2e2e; /* Darker background color for toolbar */
-                padding: 5px; /* Padding around the toolbar */
+                spacing: 15px;
+                background-color: #2e2e2e;
+                padding: 5px;
             }
             QToolButton {
-                margin: 5px; /* Space around the buttons */
-                padding: 5px; /* Padding within the buttons */
-                color: white; /* Text color for the buttons */
-                background-color: #3c3c3c; /* Button background */
-                border-radius: 4px; /* Rounded corners for buttons */
-                border: 1px solid #444444; /* Slight border for definition */
+                margin: 5px;
+                padding: 5px;
+                color: white;
+                background-color: #3c3c3c;
+                border-radius: 4px;
+                border: 1px solid #444444;
             }
             QToolButton:hover {
-                background-color: #505050; /* Hover effect */
+                background-color: #505050;
             }
             QToolButton:pressed {
-                background-color: #707070; /* Pressed button effect */
+                background-color: #707070;
             }
         """)
+
         self.create_toolbar_buttons()
 
     def create_toolbar_buttons(self):
@@ -45,7 +46,7 @@ class Toolbar(QToolBar):
         # Open File
         open_file_action = QAction("Open File", self)
         open_file_action.setShortcut("Ctrl+O")
-        open_file_action.triggered.connect(self.parent_widget.open_file)  # Correct reference
+        open_file_action.triggered.connect(self.parent_widget.open_file)
         file_menu_action.addAction(open_file_action)
 
         # Create New Folder
@@ -68,11 +69,17 @@ class Toolbar(QToolBar):
         # Add File Menu Button to Toolbar
         self.addAction(file_menu_action.menuAction())
 
-        # Run Code Button
-        run_action = QAction("Run Code", self)
-        run_action.setShortcut("Ctrl+R")
-        run_action.triggered.connect(self.parent_widget.run_code)
-        self.addAction(run_action)
+        # Add "Run Code" Button (for running the script in the editor)
+        run_code_action = QAction("Run Script", self)
+        run_code_action.setShortcut("Ctrl+Shift+R")
+        run_code_action.triggered.connect(self.parent_widget.run_code)
+        self.addAction(run_code_action)
+
+        # Add "Run Tests" Button (for running unit tests)
+        run_tests_action = QAction("Run Unit Tests", self)
+        run_tests_action.setShortcut("Ctrl+T")
+        run_tests_action.triggered.connect(self.parent_widget.run_tests)
+        self.addAction(run_tests_action)
 
         # Debugger Button
         debug_action = QAction("Start Debugger", self)
@@ -97,6 +104,7 @@ class Toolbar(QToolBar):
             snippet_action.triggered.connect(lambda checked, code=snippet_code: self.parent_widget.insert_snippet(code))
             snippets_menu.addAction(snippet_action)
 
+
         # Add snippets dropdown to toolbar
         self.addAction(snippets_menu.menuAction())
 
@@ -108,3 +116,9 @@ class Toolbar(QToolBar):
         new_tab_action.setShortcut("Ctrl+T")
         new_tab_action.triggered.connect(self.parent_widget.add_new_tab)
         self.addAction(new_tab_action)
+
+        # Add Font Settings as QAction
+        font_settings_action = QAction("Font Settings", self)
+        font_settings_action.setShortcut("Ctrl+Shift+F")
+        font_settings_action.triggered.connect(self.parent_widget.open_font_dialog)
+        self.addAction(font_settings_action)

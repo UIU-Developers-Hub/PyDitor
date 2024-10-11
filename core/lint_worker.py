@@ -1,11 +1,8 @@
-# File: core/lint_worker.py
-
-import tempfile
 import subprocess
-import os
-import time
 from PyQt6.QtCore import QThread, pyqtSignal
-import json
+import logging
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class LintWorker(QThread):
     lint_result = pyqtSignal(list)
@@ -15,44 +12,34 @@ class LintWorker(QThread):
         self.code = code
 
     def run(self):
-        # Create and write code to a temporary file using NamedTemporaryFile
-        with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
-            self.temp_filename = temp_file.name
-            temp_file.write(self.code.encode())
-
         try:
-            lint_output = self._run_pylint(self.temp_filename)
-            lint_data = self._parse_lint_output(lint_output)
-
+            # Run flake8 on the code passed via stdin (in-memory)
+            lint_output = self._run_flake8()
+            lint_data = self._parse_flake8_output(lint_output)
             if lint_data:
                 self.lint_result.emit(lint_data)
         except Exception as e:
-            print(f"Linting error: {e}")
-        finally:
-            self._safe_delete_temp_file()
+            logging.error(f"Linting error: {e}")
 
-    def _run_pylint(self, temp_filename):
-        """Run pylint on the temporary file."""
-        result = subprocess.run(['pylint', temp_filename, '--output-format', 'json'],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    def _run_flake8(self):
+        """Run flake8 on the code using stdin."""
+        result = subprocess.run(
+            ['flake8', '--stdin-display-name', 'code.py', '-'],
+            input=self.code.encode(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
         return result.stdout.decode('utf-8')
 
-    def _parse_lint_output(self, lint_output):
-        """Parse the JSON output from pylint."""
+    def _parse_flake8_output(self, lint_output):
+        """Parse the flake8 output."""
+        lint_errors = []
         if lint_output:
-            return json.loads(lint_output)
-        return []
-
-    def _safe_delete_temp_file(self):
-        """Attempt to delete the temporary file multiple times."""
-        retries = 3
-        for attempt in range(retries):
-            try:
-                if os.path.exists(self.temp_filename):
-                    os.remove(self.temp_filename)
-                    print(f"Successfully deleted temporary file: {self.temp_filename}")
-                    return
-            except PermissionError:
-                print(f"Retrying to delete temporary file: {self.temp_filename}")
-                time.sleep(0.5)  # Wait before retrying
-        print(f"Failed to delete temporary file '{self.temp_filename}' after {retries} attempts.")
+            for line in lint_output.splitlines():
+                parts = line.split(":")
+                if len(parts) >= 3:
+                    lint_errors.append({
+                        "line": int(parts[1]),
+                        "message": parts[2].strip(),
+                    })
+        return lint_errors
