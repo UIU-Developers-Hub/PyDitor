@@ -10,9 +10,9 @@ from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QPlainTextEdit, QFileDialog,
     QVBoxLayout, QWidget, QHBoxLayout, QSplitter, QTreeView,
     QLineEdit, QStatusBar, QDockWidget, QApplication, QMenu, 
-    QInputDialog, QMessageBox, QToolBar, QFontDialog
+    QInputDialog, QMessageBox, QToolBar, QFontDialog, QTextEdit
 )
-from PyQt6.QtGui import QFont, QAction, QShortcut, QKeySequence, QFileSystemModel
+from PyQt6.QtGui import QFont, QAction, QShortcut, QKeySequence, QFileSystemModel, QTextCursor
 from PyQt6.QtCore import Qt, QThreadPool
 
 from ui.toolbar import Toolbar
@@ -67,6 +67,11 @@ class AICompilerMainWindow(QMainWindow):
         # Initialize Toolbar
         self.toolbar = Toolbar(self)
         self.addToolBar(self.toolbar)
+
+        # Add the Batch Test button to the toolbar
+        self.batch_test_action = QAction("Batch Test", self)
+        self.batch_test_action.triggered.connect(self.run_batch_test)
+        self.toolbar.addAction(self.batch_test_action)
 
         # Add Debugger Controls
         self.debugger_toolbar = QToolBar("Debugger", self)
@@ -129,17 +134,21 @@ class AICompilerMainWindow(QMainWindow):
         """Set up Input/Output tabs in the right splitter."""
         self.io_tabs = QTabWidget()
         self.io_tabs.setTabsClosable(False)
+
+        # Input field setup
         self.input_field = QLineEdit()
         self.input_field.setStyleSheet("background-color: #2e2e2e; color: #abb2bf; padding: 10px;")
         self.input_field.setPlaceholderText("Input for the script...")
         self.io_tabs.addTab(self.input_field, "Input")
 
-        self.output_text = QPlainTextEdit()
+        # Output field setup using QPlainTextEdit
+        self.output_text = QTextEdit()  # Changed from QTextEdit
         self.output_text.setReadOnly(True)
         self.output_text.setStyleSheet("background-color: #2e2e2e; color: #abb2bf; padding: 10px;")
         self.output_text.setPlaceholderText("Output/Error logs...")
         self.io_tabs.addTab(self.output_text, "Output")
 
+        # Container and layout setup
         io_container = QWidget()
         io_layout = QVBoxLayout(io_container)
         io_layout.addWidget(self.io_tabs)
@@ -292,11 +301,11 @@ class AICompilerMainWindow(QMainWindow):
 
     def handle_output(self, output):
         """Handle the output received from running the tests or code."""
-        self.output_text.appendPlainText(output)
+        self.append_output(output)
 
     def handle_error(self, error):
         """Handle the error received from running the tests or code."""
-        self.output_text.appendPlainText(error)
+        self.append_output(error)
 
     def open_file(self):
         """Open a file using a file dialog."""
@@ -456,13 +465,11 @@ class AICompilerMainWindow(QMainWindow):
 
     def handle_output(self, output):
         """Handle the output received from running the tests or code."""
-        self.output_text.appendPlainText(output)
-        self.statusBar().showMessage(output, 3000)
+        self.append_output(output)
 
     def handle_error(self, error):
         """Handle the error received from running the tests or code."""
-        self.output_text.appendPlainText(f"Error: {error}")
-        self.statusBar().showMessage(f"Error: {error}", 3000)
+        self.append_output(error)
 
     def continue_debugger(self):
         """Continue the execution in the debugger."""
@@ -529,9 +536,78 @@ class AICompilerMainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Error: No active code editor to insert the snippet.", 5000)
 
+    def run_batch_test(self):
+        """
+        Open a file dialog to choose the batch test file and run batch tests.
+        """
+        input_file, _ = QFileDialog.getOpenFileName(self, "Open Batch Test File", "", "Text Files (*.txt);;All Files (*)")
+
+        if input_file:
+            # You can replace 'self.sample_function' with any function you want to test
+            self.batch_test(self.sample_function, input_file)
+
+    def batch_test(self, function, input_file_path):
+        """
+        Function to run batch tests for any provided function.
+        
+        Parameters:
+        function (callable): The function to test, it will be called with arguments from the input file.
+        input_file_path (str): Path to the input file containing test cases.
+        """
+        try:
+            # Open the input file and read test cases
+            with open(input_file_path, 'r') as file:
+                test_cases = file.readlines()
+
+            if not test_cases:
+                self.statusBar().showMessage("No test cases found in the file.", 5000)
+                return
+
+            results = []
+            print("Running batch tests...\n")
+
+            # Process each test case
+            for i, case in enumerate(test_cases):
+                # Split the test case string into arguments (assuming space-separated arguments)
+                args = case.strip().split()
+
+                # Convert arguments to integers (or another type depending on the function)
+                try:
+                    args = [int(arg) for arg in args]
+                except ValueError:
+                    self.output_text.appendPlainText(f"Test case {i+1}: Invalid input format: {case.strip()}")
+                    continue
+
+                try:
+                    # Apply the function and collect the result
+                    result = function(*args)
+                    results.append(f"Test case {i+1}: Input: {args} -> Output: {result}")
+                except Exception as e:
+                    results.append(f"Test case {i+1}: Input: {args} -> Error: {e}")
+
+                # Display the result in the output pane
+                self.output_text.appendPlainText(results[-1])
+
+        except FileNotFoundError:
+            self.statusBar().showMessage(f"Error: The file '{input_file_path}' does not exist.", 5000)
+        except Exception as e:
+            self.statusBar().showMessage(f"An error occurred: {e}", 5000)
+
+    # Sample function for batch testing
+    def sample_function(self, *args):
+        """ A sample function that takes arguments and returns their sum. """
+        return sum(args)
+
+    def append_output(self, output):
+        """Append text to the output field."""
+        self.output_text.moveCursor(QTextCursor.End)  # Move cursor to the end
+        self.output_text.insertPlainText(output)  # Insert text at the cursor position
+        self.output_text.moveCursor(QTextCursor.End)  # Ensure cursor remains at the end
+
 
 if __name__ == "__main__":
     app = QApplication([])
     main_win = AICompilerMainWindow()
     main_win.show()
     app.exec()
+

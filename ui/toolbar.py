@@ -1,6 +1,4 @@
-#E:\UDH\Compiler\ui\toolbar.py  
-
-from PyQt6.QtWidgets import QToolBar, QMenu
+from PyQt6.QtWidgets import QToolBar, QMenu, QFileDialog
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
@@ -103,7 +101,6 @@ class Toolbar(QToolBar):
 
         for snippet_name, snippet_code in snippets.items():
             snippet_action = QAction(snippet_name, self)
-            # Explicitly pass `snippet_code` in the lambda to avoid late binding issues
             snippet_action.triggered.connect(lambda checked, code=snippet_code: self.parent_widget.insert_snippet(code))
             snippets_menu.addAction(snippet_action)
 
