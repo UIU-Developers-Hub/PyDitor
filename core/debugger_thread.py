@@ -1,4 +1,4 @@
-import sys  # Ensure this import is present
+import sys
 import subprocess
 import queue
 import threading
@@ -23,27 +23,23 @@ class DebuggerThread(QThread):
     def run(self):
         temp_filename = "temp_debug_script.py"
         try:
-            # Write code to a temporary file for debugging
             with open(temp_filename, "w") as temp_file:
                 temp_file.write(self.code)
 
             logging.info(f"Starting debugger for code in {temp_filename}")
 
-            # Start pdb in a subprocess
             self.process = subprocess.Popen(
-                [sys.executable, "-m", "pdb", temp_filename],  # Correctly pass the temporary filename to pdb
+                [sys.executable, "-m", "pdb", temp_filename],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
 
-            # Start a thread to handle input to the debugger
             input_thread = threading.Thread(target=self.process_input)
             input_thread.daemon = True
             input_thread.start()
 
-            # Read and emit output from the debugger
             for line in iter(self.process.stdout.readline, ''):
                 if line:
                     self.output_received.emit(line)
@@ -55,15 +51,9 @@ class DebuggerThread(QThread):
             self.error_received.emit(str(e))
             logging.error(f"Debugger error: {str(e)}")
         finally:
-            if self.process:
-                logging.debug(f"Terminating debugger process.")
-                self.process.terminate()
-            if os.path.exists(temp_filename):
-                logging.debug(f"Deleting temp file: {temp_filename}")
-                os.remove(temp_filename)
+            self._terminate_and_cleanup(temp_filename)
 
     def process_input(self):
-        """Handle input to the debugger process."""
         while self.running:
             try:
                 command = self.command_queue.get(timeout=1)
@@ -78,6 +68,17 @@ class DebuggerThread(QThread):
 
     def send_command(self, command: str):
         self.command_queue.put(command)
+
+    def _terminate_and_cleanup(self, temp_filename):
+        if self.process:
+            try:
+                logging.debug(f"Terminating debugger process.")
+                self.process.terminate()
+            except Exception as e:
+                self.error_received.emit(f"Failed to terminate debugger: {str(e)}")
+        if os.path.exists(temp_filename):
+            logging.debug(f"Deleting temp file: {temp_filename}")
+            os.remove(temp_filename)
 
     def stop(self):
         self.running = False

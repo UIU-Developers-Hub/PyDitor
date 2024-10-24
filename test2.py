@@ -1,23 +1,19 @@
-def bubble_sort(arr):
+# test_lint_code.py
 
-    # Outer loop to iterate through the list n times
-    for n in range(len(arr) - 1, 0, -1):
+import sys, os  # This will trigger a lint warning for an unused import
 
-        # Inner loop to compare adjacent elements
-        for i in range(n):
-            if arr[i] > arr[i + 1]:
+def BubbleSort(arr):  # This will trigger a naming convention warning
+    n = len(arr)
+    for i in range(n):
+        for j in range(0, n-i-1):
+            if arr[j] > arr[j+1]:
+                arr[j], arr[j+1] = arr[j+1], arr[j]  # This line is fine
 
-                # Swap elements if they are in the wrong order
-                swapped = True
-                arr[i], arr[i + 1] = arr[i + 1], arr[i]
+    print(arr)  # This will trigger a lint warning for using print() in production code
 
+    # The following code has indentation errors to trigger lint errors
+    if True:
+      print("This is indented incorrectly")
 
-# Sample list to be sorted
-arr = [39, 12, 18, 85, 72, 10, 2, 18]
-print("Unsorted list is:")
-print(arr)
-
-bubble_sort(arr)
-
-print("Sorted list is:")
-print(arr)
+# Running the function
+bubble_sort([64, 34, 25, 12, 22, 11, 90])  # This will trigger a lint error for using an undefined variable

@@ -1,3 +1,5 @@
+# main_window.py
+
 import sys
 import os
 import json
@@ -17,30 +19,41 @@ from ui.toolbar import Toolbar
 from core.code_runner_thread import CodeRunnerThread, Signals
 from ui.documentation_sidebar import DocumentationSidebar
 from ui.code_editor import CodeEditor
-from core.debugger_thread import DebuggerThread  # Ensure this is properly imported
+from core.debugger_thread import DebuggerThread
 
-# Set Jedi's log level to a higher level to suppress debug messages
+# Set Jedi's log level to suppress debug messages
 logging.getLogger('jedi').setLevel(logging.INFO)
-
 
 class AICompilerMainWindow(QMainWindow):
     RECENT_FILES_LIMIT = 5
-    RECENT_FILES_PATH = "recent_files.json"  # Changed to JSON
+    RECENT_FILES_PATH = "recent_files.json"
     SETTINGS_PATH = "user_settings.json"
     SESSION_PATH = "last_session.json"
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Data Science Code Visualization")
-        self.setGeometry(100, 100, 1200, 800)
+
+        # Create the main widget and layout
+        main_widget = QWidget()
+        layout = QVBoxLayout()
+
+        # Create and add the CodeEditor to the layout
+        self.editor = CodeEditor()
+        layout.addWidget(self.editor)
+
+        # Set the layout and the central widget
+        main_widget.setLayout(layout)
+        self.setCentralWidget(main_widget)
+
+        self.setWindowTitle("Python IDE")
+
         self.thread_pool = ThreadPoolExecutor(max_workers=5)
-        self.threads = []  # Keep track of all created threads
+        self.threads = []
         self.previous_tab_index = None
         self.modified_tabs = set()
         self.unsaved_tab_open = False
         self.tab_process_map = {}
 
-        # Set up logging
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
         self.setup_ui()
@@ -110,7 +123,7 @@ class AICompilerMainWindow(QMainWindow):
         self.setup_io_tabs(right_splitter)
 
         # Initialize and set the QStatusBar
-        self.setStatusBar(QStatusBar())  # Correct QStatusBar initialization
+        self.setStatusBar(QStatusBar())
 
     def setup_io_tabs(self, right_splitter):
         """Set up Input/Output tabs in the right splitter."""
@@ -249,15 +262,14 @@ class AICompilerMainWindow(QMainWindow):
             self.output_text.clear()
 
             # Switch to the "Output" tab automatically
-            self.io_tabs.setCurrentIndex(1)  # Switch to the "Output" tab
+            self.io_tabs.setCurrentIndex(1)
 
             signals = Signals()
             signals.output_received.connect(self.handle_output)
             signals.error_received.connect(self.handle_error)
 
-            # Pass the saved file path to the runner
             runnable = CodeRunnerThread(file_path, self.input_field.text().strip(), signals)
-            self.thread_pool.start(runnable)  # Use the thread pool to start the runnable
+            self.thread_pool.submit(runnable.run)
 
     def run_tests(self):
         """Run unit tests from the current editor."""
@@ -428,12 +440,12 @@ class AICompilerMainWindow(QMainWindow):
             self.output_text.clear()
 
             # Switch to the "Output" tab automatically
-            self.io_tabs.setCurrentIndex(1)  # This will switch to the "Output" tab
+            self.io_tabs.setCurrentIndex(1)
 
             # Check if a previous debugger thread is running and stop it
             if hasattr(self, 'debugger_thread') and self.debugger_thread.isRunning():
                 self.debugger_thread.terminate()
-                self.debugger_thread.wait()  # Ensure it stops before starting a new one
+                self.debugger_thread.wait()
 
             # Start the DebuggerThread
             self.debugger_thread = DebuggerThread(code)
@@ -444,12 +456,12 @@ class AICompilerMainWindow(QMainWindow):
 
     def handle_output(self, output):
         """Handle the output received from running the tests or code."""
-        self.output_text.appendPlainText(output)  # Display the output in the Output tab
+        self.output_text.appendPlainText(output)
         self.statusBar().showMessage(output, 3000)
 
     def handle_error(self, error):
         """Handle the error received from running the tests or code."""
-        self.output_text.appendPlainText(f"Error: {error}")  # Display the error in the Output tab
+        self.output_text.appendPlainText(f"Error: {error}")
         self.statusBar().showMessage(f"Error: {error}", 3000)
 
     def continue_debugger(self):
@@ -471,28 +483,23 @@ class AICompilerMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure all threads are stopped before closing the application."""
-        # Safely stop all running threads in the thread pool
-        self.thread_pool.shutdown(wait=True)  # Wait for thread pool tasks to finish
+        self.thread_pool.shutdown(wait=True)  # Safely stop the thread pool
 
-        # Stop all active QThreads (like code runners, linters, etc.)
-        for thread in self.findChildren(QThread):  # Finds all QThread children in the main window
+        # Ensure lint and other QThreads are terminated properly
+        for thread in self.findChildren(QThread):
             if thread.isRunning():
-                thread.quit()  # Request the thread to exit
-                thread.wait()  # Wait until the thread has finished
+                thread.quit()
+                thread.wait()
 
-        # Handle any other thread cleanup if necessary
         current_editor = self.tab_widget.currentWidget()
         if isinstance(current_editor, CodeEditor):
-            # Check if the current editor has a lint_worker and terminate if it exists
             if hasattr(current_editor, 'lint_worker') and current_editor.lint_worker.isRunning():
                 current_editor.lint_worker.terminate()
                 current_editor.lint_worker.wait()
-            # Optionally, handle lint_timer if that's what you meant to handle
             elif hasattr(current_editor, 'lint_timer'):
-                current_editor.lint_timer.stop()  # Stop the linting timer if running
+                current_editor.lint_timer.stop()
 
-        # Accept the event, allowing the window to close
-        event.accept()
+        event.accept()  # Call the parent class to complete closing
 
     def save_session(self):
         """Save the current session state."""
@@ -512,21 +519,17 @@ class AICompilerMainWindow(QMainWindow):
         with open(self.SESSION_PATH, 'w') as session_file:
             json.dump(session_data, session_file)
 
-    # Add this method to any part of your code that creates new threads
-    def create_and_start_thread(self, target, *args, **kwargs):
-        thread = QThread()
-        worker = target(*args, **kwargs)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        self.threads.append(thread)
-        thread.start()
-        return worker, thread
+    def insert_snippet(self, code_snippet):
+        """Insert the provided code snippet into the current editor."""
+        current_editor = self.tab_widget.currentWidget()
+        if isinstance(current_editor, CodeEditor):
+            cursor = current_editor.textCursor()
+            cursor.insertText(code_snippet)
+            self.statusBar().showMessage("Snippet inserted", 3000)
+        else:
+            self.statusBar().showMessage("Error: No active code editor to insert the snippet.", 5000)
 
 
-# Main entry point
 if __name__ == "__main__":
     app = QApplication([])
     main_win = AICompilerMainWindow()

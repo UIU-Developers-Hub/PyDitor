@@ -1,49 +1,71 @@
-# File: ui/syntax_highlighter.py
-
-from PyQt6.QtCore import QRegularExpression
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
+from pygments import highlight
+from pygments.lexers import PythonLexer
+from pygments.token import Token
+from pygments.formatter import Formatter
+
+class QFormatter(Formatter):
+    """
+    A custom Pygments formatter that applies syntax highlighting
+    via the QSyntaxHighlighter interface.
+    """
+    def __init__(self, highlighter):
+        super().__init__()
+        self.highlighter = highlighter
+        self.data = []
+
+    def format(self, tokensource, outfile):
+        """Store tokens for later use."""
+        for ttype, value in tokensource:
+            self.data.append((ttype, value))
 
 class PythonSyntaxHighlighter(QSyntaxHighlighter):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    """
+    Syntax highlighter for Python using Pygments lexer and custom QSyntaxHighlighter.
+    """
+    def __init__(self, document):
+        super().__init__(document)
+        self.lexer = PythonLexer()
+        self.formatter = QFormatter(self)
 
-        # Define formats for syntax highlighting
-        self.keyword_format = QTextCharFormat()
-        self.keyword_format.setForeground(QColor("#7aa6da"))  # Softer blue color for keywords
-        self.keyword_format.setFontWeight(QFont.Weight.Bold)
+        # Define the text formats for each token type (VS Code-like theme)
+        self.formats = {
+            Token.Keyword: self.create_format(QColor("#569CD6"), bold=True),  # Blue for keywords
+            Token.Comment: self.create_format(QColor("#6A9955")),  # Green for comments
+            Token.String: self.create_format(QColor("#CE9178")),  # Red for strings
+            Token.Number: self.create_format(QColor("#B5CEA8")),  # Light green for numbers
+            Token.Operator: self.create_format(QColor("#D4D4D4")),  # Light grey for operators
+            Token.Name.Function: self.create_format(QColor("#DCDCAA")),  # Yellow for functions
+            Token.Name.Class: self.create_format(QColor("#4EC9B0")),  # Cyan for classes
+            Token.Name.Variable: self.create_format(QColor("#9CDCFE")),  # Light blue for variables
+            Token.Text: self.create_format(QColor("#D4D4D4")),  # Default text color (light grey)
+        }
 
-        self.comment_format = QTextCharFormat()
-        self.comment_format.setForeground(QColor("#b9ca4a"))  # Greenish color for comments
-
-        self.string_format = QTextCharFormat()
-        self.string_format.setForeground(QColor("#dca3a3"))  # Soft red color for strings
-
-        # Define regex patterns for syntax highlighting
-        keywords = [
-            "def", "class", "if", "elif", "else", "while", "for", "in", "return",
-            "import", "from", "as", "try", "except", "finally", "with", "lambda", "and", "or", "not", "is",
-            "break", "continue", "pass", "raise", "yield", "assert"
-        ]
-
-        self.highlighting_rules = [
-            # Keywords
-            (QRegularExpression(r'\b(' + '|'.join(keywords) + r')\b'), self.keyword_format),
-            # Comments
-            (QRegularExpression(r'#.*'), self.comment_format),
-            # Strings (single and double quotes)
-            (QRegularExpression(r'\".*?\"'), self.string_format),
-            (QRegularExpression(r"\'.*?\'"), self.string_format),
-        ]
+    def create_format(self, color, bold=False, italic=False):
+        """Helper method to create a QTextCharFormat."""
+        text_format = QTextCharFormat()
+        text_format.setForeground(color)
+        if bold:
+            text_format.setFontWeight(QFont.Weight.Bold)
+        if italic:
+            text_format.setFontItalic(True)
+        return text_format
 
     def highlightBlock(self, text):
-        # Apply highlighting rules
-        for pattern, fmt in self.highlighting_rules:
-            expression = QRegularExpression(pattern)
-            match_iterator = expression.globalMatch(text)
-            while match_iterator.hasNext():
-                match = match_iterator.next()
-                start = match.capturedStart()
-                length = match.capturedLength()
-                self.setFormat(start, length, fmt)
+        """Apply syntax highlighting to the block of text."""
+        # Use Pygments to tokenize the text
+        highlight(text, self.lexer, self.formatter)
 
-        self.setCurrentBlockState(0)
+        # Apply formatting based on the tokens
+        index = 0
+        for ttype, value in self.formatter.data:
+            length = len(value)
+            token_type = ttype
+            while token_type not in self.formats and token_type.parent:
+                token_type = token_type.parent  # Fallback to parent token type
+            if token_type in self.formats:
+                self.setFormat(index, length, self.formats[token_type])
+            index += length
+
+        # Clear formatter data for next use
+        self.formatter.data = []

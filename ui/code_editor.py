@@ -1,15 +1,17 @@
+#E:\UDH\Compiler\ui\code_editor.py
+
 import sys
 import os
 import jedi
 import subprocess
 import logging
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QCompleter, QToolTip
-from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor
-from PyQt6.QtCore import QRect, QSize, Qt, QStringListModel, pyqtSignal, QObject, QTimer, QThread
+from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont
+from PyQt6.QtCore import QRect, QSize, Qt, QStringListModel, pyqtSignal, QObject, QTimer, QThread, QEvent
 from concurrent.futures import ThreadPoolExecutor
 from .syntax_highlighter import PythonSyntaxHighlighter
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # LineNumberArea class to display line numbers in the editor
 class LineNumberArea(QWidget):
@@ -34,6 +36,7 @@ class LintWorker(QThread):
     def __init__(self, code):
         super().__init__()
         self.code = code
+        self.process = None
 
     def run(self):
         try:
@@ -43,103 +46,151 @@ class LintWorker(QThread):
                 self.lint_result.emit(lint_data)
         except Exception as e:
             logging.error(f"Linting error: {e}")
+        finally:
+            self._terminate_and_cleanup()
 
     def _run_flake8(self):
-        """Run flake8 on the code using stdin."""
-        result = subprocess.run(
-            ['flake8', '--stdin-display-name', 'code.py', '-'],
-            input=self.code.encode(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        return result.stdout.decode('utf-8')
+        try:
+            self.process = subprocess.Popen(
+                ['flake8', '--stdin-display-name', 'code.py', '-'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            output, _ = self.process.communicate(input=self.code)
+            return output
+        except FileNotFoundError as e:
+            logging.error(f"Flake8 not found: {e}")
+            raise FileNotFoundError("Flake8 is not installed. Please install it to use linting.")
 
     def _parse_flake8_output(self, lint_output):
-        """Parse the flake8 output."""
         lint_errors = []
         if lint_output:
             for line in lint_output.splitlines():
                 parts = line.split(":")
                 if len(parts) >= 3:
                     lint_errors.append({
-                        "line": int(parts[1]),
+                        "line": int(parts[1]),  # 1-based line number
                         "message": parts[2].strip(),
                     })
         return lint_errors
+
+    def _terminate_and_cleanup(self):
+        if self.process:
+            try:
+                if self.process.poll() is None:
+                    self.process.terminate()
+                    self.process.wait(3)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
 
 # CodeEditor class for the main editor functionality
 class CodeEditor(QPlainTextEdit):
     def __init__(self):
         super().__init__()
+
+        # Ensure the Python syntax highlighter is applied
+        self.highlighter = PythonSyntaxHighlighter(self.document())  
+
         self._setup_ui()
         self._setup_linting()
         self._setup_autocompletion()
 
-        # Track lint errors
         self.lint_errors = {}
+        self.lint_messages = {}
 
     def _setup_ui(self):
-        """Set up the UI components including the line number area."""
         self.lineNumberArea = LineNumberArea(self)
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
-        self.setStyleSheet("background-color: #2b2b2b; color: white;")
+
+        # Set font and basic appearance settings for the editor
+        font = QFont("Courier", 12)
+        self.setFont(font)
 
     def _setup_linting(self):
-        """Set up linting with a timer for delayed execution."""
         self.lint_timer = QTimer(self)
-        self.lint_timer.setInterval(1500)  # 1.5 seconds idle time before linting
+        self.lint_timer.setInterval(1500)
         self.lint_timer.timeout.connect(self.lint_code)
         self.textChanged.connect(self._on_text_changed)
 
     def _on_text_changed(self):
-        """Start lint timer when text is changed."""
         self.lint_timer.start()
 
     def lint_code(self):
-        """Lint the code in the current editor using flake8."""
-        code = self.toPlainText()  # Get code from editor directly
+        """Lint the code using flake8."""
+        code = self.toPlainText()
+        
+        if hasattr(self, 'lint_worker') and self.lint_worker.isRunning():
+            # Ensure we stop any running worker before starting a new one
+            self.lint_worker.quit()
+            self.lint_worker.wait()
+
         self.lint_worker = LintWorker(code)
         self.lint_worker.lint_result.connect(self._highlight_lint_errors)
         self.lint_worker.start()
 
     def _highlight_lint_errors(self, lint_data):
-        """Highlight errors from linting."""
+        """Highlight linting errors and warnings in the editor."""
         self.lint_errors.clear()
-        self.highlight_current_line()
         extra_selections = []
 
         for error in lint_data:
-            line_number = error.get('line') - 1
-            self.lint_errors[line_number] = error.get('message')
+            line_number = error['line'] - 1  # Convert 1-based line number to 0-based
+            message = error['message']
+            self.lint_errors[line_number] = message
 
             selection = QTextEdit.ExtraSelection()
-            selection.format.setBackground(QColor("#FFD700"))
-            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            
+            # Different background color for warnings and errors
+            if 'warning' in message.lower():
+                selection.format.setBackground(QColor("#FFD700"))  # Yellow for warnings
+            else:
+                selection.format.setBackground(QColor("#FF6347"))  # Red for errors
+
             cursor = self._get_cursor_at_line(line_number)
             selection.cursor = cursor
-            selection.cursor.clearSelection()
             extra_selections.append(selection)
 
-        self.setExtraSelections(extra_selections)
+        self.setExtraSelections(extra_selections)  # Apply the highlights
+        self.update()  # Ensure the editor is repainted
+        logging.debug(f"Lint errors highlighted on lines: {list(self.lint_errors.keys())}")
 
     def _get_cursor_at_line(self, line_number):
-        """Get a cursor positioned at the specified line."""
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        """Get a QTextCursor positioned at the start of the specified line."""
+        cursor = QTextCursor(self.document())  # Create a cursor for the document
+        cursor.movePosition(QTextCursor.MoveOperation.Start)  # Move to the start of the document
         for _ in range(line_number):
-            cursor.movePosition(QTextCursor.MoveOperation.Down)
-        return cursor
+            cursor.movePosition(QTextCursor.MoveOperation.Down)  # Move down line by line
+        return cursor  # Return the cursor positioned at the start of the specified line
+
+    def eventFilter(self, obj, event):
+        """Detect hover events and show tooltips for errors and warnings."""
+        if event.type() == QEvent.Type.ToolTip:
+            cursor = self.cursorForPosition(event.pos())
+            block_number = cursor.blockNumber()
+
+            # If the current line has an error or warning, show a tooltip
+            if block_number in self.lint_messages:
+                message = self.lint_messages[block_number]
+                # Format the message for display
+                message = f"<b>Line {block_number + 1}:</b><br>" + message.replace("\n", "<br>")
+                QToolTip.showText(event.globalPos(), message, self)
+            else:
+                QToolTip.hideText()
+
+            return True
+
+        return super().eventFilter(obj, event)
 
     def update_line_number_area_width(self, _):
-        """Update the line number area width based on the number of digits."""
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
     def update_line_number_area(self, rect, dy):
-        """Handle updates to the line number area during scrolling."""
         if dy:
             self.lineNumberArea.scroll(0, dy)
         else:
@@ -148,18 +199,15 @@ class CodeEditor(QPlainTextEdit):
             self.update_line_number_area_width(0)
 
     def line_number_area_width(self):
-        """Calculate the required width for the line number area."""
         digits = len(str(max(1, self.blockCount())))
         return 3 + self.fontMetrics().horizontalAdvance('9') * digits
 
     def resizeEvent(self, event):
-        """Resize the line number area when the editor is resized."""
         super().resizeEvent(event)
         cr = self.contentsRect()
         self.lineNumberArea.setGeometry(QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height()))
 
     def line_number_area_paint_event(self, event):
-        """Paint the line numbers in the line number area."""
         painter = QPainter(self.lineNumberArea)
         painter.fillRect(event.rect(), QColor("#2b2b2b"))
 
@@ -180,7 +228,6 @@ class CodeEditor(QPlainTextEdit):
             block_number += 1
 
     def highlight_current_line(self):
-        """Highlight the current line in the editor."""
         extra_selections = []
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
@@ -194,7 +241,6 @@ class CodeEditor(QPlainTextEdit):
     def _setup_autocompletion(self):
         """Set up autocompletion system."""
         self.completer = QCompleter(self)
-        self.completer.popup().setStyleSheet("background-color: #2b2b2b; color: white;")
         self.completer.setWidget(self)
         self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.completer.activated.connect(self.insert_completion)
@@ -256,3 +302,11 @@ class CodeEditor(QPlainTextEdit):
         cursor.select(QTextCursor.SelectionType.WordUnderCursor)
         cursor.insertText(completion)
         self.setTextCursor(cursor)
+
+    def closeEvent(self, event):
+        """Ensure all threads are terminated before closing the application."""
+        if hasattr(self, 'lint_worker') and self.lint_worker.isRunning():
+            self.lint_worker.quit()
+            self.lint_worker.wait()
+        super().closeEvent(event)
+

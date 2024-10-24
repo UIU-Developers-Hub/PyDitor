@@ -1,5 +1,3 @@
-# File: core/code_runner_thread.py
-
 import sys
 import subprocess
 import logging
@@ -10,38 +8,35 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 
 class Signals(QObject):
     """Signals to communicate between threads and the main UI."""
-    output_received = pyqtSignal(str)  # Signal for capturing the standard output
-    error_received = pyqtSignal(str)   # Signal for capturing errors
+    output_received = pyqtSignal(str)
+    error_received = pyqtSignal(str)
 
 
 class CodeRunnerThread(QThread):
     def __init__(self, file_path, input_value, signals, timeout=5):
         super().__init__()
-        self.file_path = file_path  # Path to the file to run
-        self.input_value = input_value  # Any input to be passed to the script
-        self.signals = signals  # Signals for communicating output and errors
-        self.timeout = timeout  # Timeout for running the process
+        self.file_path = file_path
+        self.input_value = input_value
+        self.signals = signals
+        self.timeout = timeout
         self.process = None
 
     def run(self):
         try:
-            # Run the saved file directly using its path
             self.process = subprocess.Popen(
-                [sys.executable, self.file_path],  # Command to run the Python file
+                [sys.executable, self.file_path],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True  # Ensure output is captured as strings
+                text=True
             )
 
-            # Capture the output and errors with a timeout
             try:
                 output, error = self.process.communicate(input=self.input_value, timeout=self.timeout)
             except subprocess.TimeoutExpired:
-                self.process.kill()  # Kill the process if it exceeds the timeout
-                output, error = self.process.communicate()  # Capture output/error after force kill
+                self.process.kill()
+                output, error = self.process.communicate()
 
-            # Emit the output and error signals
             if output:
                 self.signals.output_received.emit(output)
             if error:
@@ -53,18 +48,19 @@ class CodeRunnerThread(QThread):
             self._terminate_and_cleanup()
 
     def _terminate_and_cleanup(self):
-        """Ensure the process is terminated."""
         if self.process:
             try:
-                if self.process.poll() is None:  # Check if the process is still running
-                    self.process.terminate()     # Attempt to terminate gracefully
-                    self.process.wait(3)         # Wait for it to terminate
+                if self.process.poll() is None:
+                    self.process.terminate()
+                    self.process.wait(3)
             except subprocess.TimeoutExpired:
-                self.process.kill()              # Force kill if it takes too long
+                self.process.kill()
+            finally:
+                self.process = None
 
     def stop(self):
-        """Gracefully stop the thread."""
         if self.process and self.process.poll() is None:
-            self.process.terminate()  # Try to stop the running process
-        self.terminate()  # Stop the thread
-        self.wait()  # Wait for the thread to exit
+            self.process.terminate()
+            self.process.wait()
+        self.quit()
+        self.wait()

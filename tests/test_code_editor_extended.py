@@ -45,4 +45,4 @@ class TestCodeEditorExtended(unittest.TestCase):
         # Verify that lint_errors contains expected data
         self.assertIsInstance(self.editor.lint_errors, dict, "Lint errors should be a dictionary.")
     
-    def test_handle_autocompleti
+
