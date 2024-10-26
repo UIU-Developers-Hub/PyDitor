@@ -6,7 +6,7 @@ import jedi
 import subprocess
 import logging
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QCompleter, QToolTip
-from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont
+from PyQt6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QTextCharFormat
 from PyQt6.QtCore import QRect, QSize, Qt, QStringListModel, pyqtSignal, QObject, QTimer, QThread, QEvent
 from concurrent.futures import ThreadPoolExecutor
 from .syntax_highlighter import PythonSyntaxHighlighter
@@ -40,10 +40,10 @@ class LintWorker(QThread):
 
     def run(self):
         try:
-            lint_output = self._run_flake8()
-            lint_data = self._parse_flake8_output(lint_output)
+            lint_output = self._run_flake8()  # Run flake8
+            lint_data = self._parse_flake8_output(lint_output)  # Parse the output
             if lint_data:
-                self.lint_result.emit(lint_data)
+                self.lint_result.emit(lint_data)  # Emit the linting result
         except Exception as e:
             logging.error(f"Linting error: {e}")
         finally:
@@ -69,10 +69,13 @@ class LintWorker(QThread):
         if lint_output:
             for line in lint_output.splitlines():
                 parts = line.split(":")
-                if len(parts) >= 3:
+                if len(parts) >= 4:
+                    # Example format: filename:line:column: error_code error_message
+                    line_number = int(parts[1])  # Extract the line number
+                    error_message = parts[3].strip()  # Extract the error code and message
                     lint_errors.append({
-                        "line": int(parts[1]),  # 1-based line number
-                        "message": parts[2].strip(),
+                        "line": line_number,  # 1-based line number
+                        "message": error_message,
                     })
         return lint_errors
 
@@ -136,29 +139,37 @@ class CodeEditor(QPlainTextEdit):
 
     def _highlight_lint_errors(self, lint_data):
         """Highlight linting errors and warnings in the editor."""
-        self.lint_errors.clear()
+        self.lint_errors.clear()  # Clear previous errors
         extra_selections = []
 
         for error in lint_data:
             line_number = error['line'] - 1  # Convert 1-based line number to 0-based
             message = error['message']
-            self.lint_errors[line_number] = message
+            self.lint_errors[line_number] = message  # Store the message for further use
 
+            # Create ExtraSelection object to highlight lines
             selection = QTextEdit.ExtraSelection()
-            
-            # Different background color for warnings and errors
+            format = QTextCharFormat()  # Create a QTextCharFormat object
+
             if 'warning' in message.lower():
-                selection.format.setBackground(QColor("#FFD700"))  # Yellow for warnings
+                format.setBackground(QColor("#FFD700"))  # Yellow for warnings
             else:
-                selection.format.setBackground(QColor("#FF6347"))  # Red for errors
+                format.setBackground(QColor("#FF6347"))  # Red for errors
+
+            selection.format = format
 
             cursor = self._get_cursor_at_line(line_number)
+            cursor.select(QTextCursor.SelectionType.LineUnderCursor)
             selection.cursor = cursor
             extra_selections.append(selection)
 
-        self.setExtraSelections(extra_selections)  # Apply the highlights
-        self.update()  # Ensure the editor is repainted
-        logging.debug(f"Lint errors highlighted on lines: {list(self.lint_errors.keys())}")
+        # Apply selections for highlighting in the editor
+        self.setExtraSelections(extra_selections)
+        self.update()
+
+        # Send linting data to main window to display in Output Tab
+        if hasattr(self.parentWidget(), 'process_lint_results'):
+            self.parentWidget().process_lint_results(lint_data)
 
     def _get_cursor_at_line(self, line_number):
         """Get a QTextCursor positioned at the start of the specified line."""
@@ -166,6 +177,7 @@ class CodeEditor(QPlainTextEdit):
         cursor.movePosition(QTextCursor.MoveOperation.Start)  # Move to the start of the document
         for _ in range(line_number):
             cursor.movePosition(QTextCursor.MoveOperation.Down)  # Move down line by line
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)  # Move to the start of the line
         return cursor  # Return the cursor positioned at the start of the specified line
 
     def eventFilter(self, obj, event):
@@ -175,8 +187,8 @@ class CodeEditor(QPlainTextEdit):
             block_number = cursor.blockNumber()
 
             # If the current line has an error or warning, show a tooltip
-            if block_number in self.lint_messages:
-                message = self.lint_messages[block_number]
+            if block_number in self.lint_errors:
+                message = self.lint_errors[block_number]
                 # Format the message for display
                 message = f"<b>Line {block_number + 1}:</b><br>" + message.replace("\n", "<br>")
                 QToolTip.showText(event.globalPos(), message, self)
@@ -309,4 +321,3 @@ class CodeEditor(QPlainTextEdit):
             self.lint_worker.quit()
             self.lint_worker.wait()
         super().closeEvent(event)
-

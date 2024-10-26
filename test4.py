@@ -1,21 +1,39 @@
-# Test Code for Linting
-import sys, os  # This will trigger a lint warning for multiple imports in one line
+def trigger_zero_division_error():
+    try:
+        result = 10 / 0  # This will raise ZeroDivisionError
+    except ZeroDivisionError as e:
+        print(f"Caught a ZeroDivisionError: {e}")
 
-def bubble_sort(arr):  # Naming conventions issue: "bubble_sort" should be "BubbleSort"
-    n = len(arr)
-    for i in range(n):
-        for j in range(0, n-i-1):
-            if arr[j] > arr[j+1]:
-                arr[j], arr[j+1] = arr[j+1], arr[j]  # No issue here
+def trigger_index_error():
+    try:
+        lst = [1, 2, 3]
+        print(lst[5])  # This will raise IndexError
+    except IndexError as e:
+        print(f"Caught an IndexError: {e}")
 
-    print(arr)  # This will trigger a warning for using print in production code
+def trigger_file_not_found_error():
+    try:
+        with open("non_existent_file.txt", "r") as f:  # This will raise FileNotFoundError
+            f.read()
+    except FileNotFoundError as e:
+        print(f"Caught a FileNotFoundError: {e}")
 
-arr = [64, 34, 25, 12, 22, 11, 90]
-bubble_sort(arr)
+def trigger_type_error():
+    try:
+        result = "string" + 10  # This will raise TypeError
+    except TypeError as e:
+        print(f"Caught a TypeError: {e}")
 
-# This will trigger a NameError
-print(undefined_var)
+def trigger_key_error():
+    try:
+        d = {"a": 1, "b": 2}
+        print(d["c"])  # This will raise KeyError
+    except KeyError as e:
+        print(f"Caught a KeyError: {e}")
 
-# Indentation issue
-def example():
-   print("Incorrectly indented")  # This line has inconsistent indentation
+if __name__ == "__main__":
+    trigger_zero_division_error()
+    trigger_index_error()
+    trigger_file_not_found_error()
+    trigger_type_error()
+    trigger_key_error()

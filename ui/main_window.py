@@ -1,5 +1,3 @@
-# main_window.py
-
 import sys
 import os
 import json
@@ -131,7 +129,7 @@ class AICompilerMainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
 
     def setup_io_tabs(self, right_splitter):
-        """Set up Input/Output tabs in the right splitter."""
+        """Set up Input/Output tabs in the right splitter with active tab font color in green."""
         self.io_tabs = QTabWidget()
         self.io_tabs.setTabsClosable(False)
 
@@ -141,18 +139,30 @@ class AICompilerMainWindow(QMainWindow):
         self.input_field.setPlaceholderText("Input for the script...")
         self.io_tabs.addTab(self.input_field, "Input")
 
-        # Output field setup using QPlainTextEdit
-        self.output_text = QTextEdit()  # Changed from QTextEdit
+        # Output field setup using QPlainTextEdit for plain text output
+        self.output_text = QPlainTextEdit()  # Ensure this is QPlainTextEdit for appending text
         self.output_text.setReadOnly(True)
         self.output_text.setStyleSheet("background-color: #2e2e2e; color: #abb2bf; padding: 10px;")
-        self.output_text.setPlaceholderText("Output/Error logs...")
         self.io_tabs.addTab(self.output_text, "Output")
+
+        # Connect to the currentChanged signal to handle the tab change
+        self.io_tabs.currentChanged.connect(self.update_tab_style)
 
         # Container and layout setup
         io_container = QWidget()
         io_layout = QVBoxLayout(io_container)
         io_layout.addWidget(self.io_tabs)
         right_splitter.addWidget(io_container)
+
+    def update_tab_style(self):
+        """Update the font color of the active tab to green and reset the inactive tabs."""
+        for i in range(self.io_tabs.count()):
+            if i == self.io_tabs.currentIndex():
+                # Active tab, set font color to green
+                self.io_tabs.tabBar().setTabTextColor(i, Qt.GlobalColor.green)
+            else:
+                # Inactive tabs, set font color to default (white/grey)
+                self.io_tabs.tabBar().setTabTextColor(i, Qt.GlobalColor.white)
 
     def setup_shortcuts(self):
         """Set up unique keyboard shortcuts."""
@@ -299,9 +309,20 @@ class AICompilerMainWindow(QMainWindow):
 
             self.io_tabs.setCurrentIndex(1)
 
-    def handle_output(self, output):
-        """Handle the output received from running the tests or code."""
-        self.append_output(output)
+    def handle_output(self, output, message_type="info"):
+        """Handle the output received and display it with appropriate colors in the output tab."""
+        self.output_text.moveCursor(QTextCursor.MoveOperation.End)  # Move cursor to the end
+
+        # Determine color based on the message type
+        if message_type == "error":
+            color = "red"
+        elif message_type == "warning":
+            color = "yellow"
+        else:
+            color = "white"  # Default to white for info messages
+
+        # Insert the message into the output field with the selected color
+        self.output_text.insertPlainText(f'{output}\n')  # For plain text output
 
     def handle_error(self, error):
         """Handle the error received from running the tests or code."""
@@ -445,27 +466,37 @@ class AICompilerMainWindow(QMainWindow):
                 self.statusBar().showMessage("Error: No code to debug!", 3000)
                 return
 
-            # Clear previous output before starting the debugger
-            self.output_text.clear()
-
-            # Switch to the "Output" tab automatically
-            self.io_tabs.setCurrentIndex(1)
-
-            # Check if a previous debugger thread is running and stop it
+            # Stop the previous debugger thread if running
             if hasattr(self, 'debugger_thread') and self.debugger_thread.isRunning():
                 self.debugger_thread.terminate()
                 self.debugger_thread.wait()
 
-            # Start the DebuggerThread
-            self.debugger_thread = DebuggerThread(code)
-            self.debugger_thread.output_received.connect(self.handle_output)
-            self.debugger_thread.error_received.connect(self.handle_error)
-            self.debugger_thread.start()
-            logging.info("Debugger started for new code session")
+            try:
+                # Start the new DebuggerThread
+                self.debugger_thread = DebuggerThread(code)
+                self.debugger_thread.output_received.connect(self.handle_output)
+                self.debugger_thread.error_received.connect(self.handle_error)
+                self.debugger_thread.start()
+                self.statusBar().showMessage("Debugger started successfully.", 3000)  # Inform user of success
+                logging.info("Debugger started for new code session")
+            except Exception as e:
+                self.statusBar().showMessage(f"Error starting debugger: {e}", 5000)  # Inform user of error
+                logging.error(f"Error starting debugger: {e}")
 
-    def handle_output(self, output):
-        """Handle the output received from running the tests or code."""
-        self.append_output(output)
+    def handle_output(self, output, message_type="info"):
+        """Handle the output received and display it with appropriate colors in the output tab."""
+        self.output_text.moveCursor(QTextCursor.MoveOperation.End)  # Move cursor to the end
+
+        # Determine color based on the message type
+        if message_type == "error":
+            color = "red"
+        elif message_type == "warning":
+            color = "yellow"
+        else:
+            color = "white"  # Default to white for info messages
+
+        # Insert the message into the output field with the selected color
+        self.output_text.insertPlainText(f'{output}\n')  # For plain text output
 
     def handle_error(self, error):
         """Handle the error received from running the tests or code."""
@@ -490,41 +521,53 @@ class AICompilerMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure all threads are stopped before closing the application."""
-        self.thread_pool.shutdown(wait=True)  # Safely stop the thread pool
+        # Shut down the ThreadPoolExecutor and wait for all tasks to finish
+        try:
+            self.thread_pool.shutdown(wait=True)  # No timeout in shutdown method
+        except Exception as e:
+            logging.error(f"Error shutting down thread pool: {e}")
+            self.statusBar().showMessage("Error shutting down thread pool. Please try again.", 5000)  # Inform user
 
-        # Ensure lint and other QThreads are terminated properly
+        # Wait for all QThreads to stop, with a manual timeout for thread termination
         for thread in self.findChildren(QThread):
             if thread.isRunning():
                 thread.quit()
-                thread.wait()
+                thread.wait(5000)  # Wait for up to 5 seconds for each thread to stop
 
         current_editor = self.tab_widget.currentWidget()
         if isinstance(current_editor, CodeEditor):
+            # Ensure that lint worker or other QThreads are stopped
             if hasattr(current_editor, 'lint_worker') and current_editor.lint_worker.isRunning():
                 current_editor.lint_worker.terminate()
                 current_editor.lint_worker.wait()
             elif hasattr(current_editor, 'lint_timer'):
                 current_editor.lint_timer.stop()
 
-        event.accept()  # Call the parent class to complete closing
+        event.accept()  # Ensure the event is accepted and the app closes
 
     def save_session(self):
         """Save the current session state."""
-        session_data = {
-            "open_files": [],
-            "current_tab_index": self.tab_widget.currentIndex()
-        }
+        try:
+            session_data = {
+                "open_files": [],
+                "current_tab_index": self.tab_widget.currentIndex()
+            }
 
-        for i in range(self.tab_widget.count()):
-            editor = self.tab_widget.widget(i)
-            if isinstance(editor, CodeEditor):
-                session_data["open_files"].append({
-                    "file_path": editor.file_path,
-                    "content": editor.toPlainText()
-                })
+            for i in range(self.tab_widget.count()):
+                editor = self.tab_widget.widget(i)
+                if isinstance(editor, CodeEditor):
+                    session_data["open_files"].append({
+                        "file_path": editor.file_path,
+                        "content": editor.toPlainText()
+                    })
 
-        with open(self.SESSION_PATH, 'w') as session_file:
-            json.dump(session_data, session_file)
+            with open(self.SESSION_PATH, 'w') as session_file:
+                json.dump(session_data, session_file)
+
+        except IOError as e:
+            self.statusBar().showMessage(f"Error saving session: {e.strerror}", 5000)  # More specific error message
+        except Exception as e:
+            self.statusBar().showMessage(f"An unexpected error occurred: {e}", 5000)
 
     def insert_snippet(self, code_snippet):
         """Insert the provided code snippet into the current editor."""
@@ -547,15 +590,9 @@ class AICompilerMainWindow(QMainWindow):
             self.batch_test(self.sample_function, input_file)
 
     def batch_test(self, function, input_file_path):
-        """
-        Function to run batch tests for any provided function.
-        
-        Parameters:
-        function (callable): The function to test, it will be called with arguments from the input file.
-        input_file_path (str): Path to the input file containing test cases.
-        """
+        """Function to run batch tests for any provided function."""
+        results = []  # Initialize results list to store test results
         try:
-            # Open the input file and read test cases
             with open(input_file_path, 'r') as file:
                 test_cases = file.readlines()
 
@@ -563,30 +600,31 @@ class AICompilerMainWindow(QMainWindow):
                 self.statusBar().showMessage("No test cases found in the file.", 5000)
                 return
 
-            results = []
-            print("Running batch tests...\n")
-
-            # Process each test case
             for i, case in enumerate(test_cases):
-                # Split the test case string into arguments (assuming space-separated arguments)
                 args = case.strip().split()
 
-                # Convert arguments to integers (or another type depending on the function)
                 try:
-                    args = [int(arg) for arg in args]
+                    args = [int(arg) for arg in args]  # Convert inputs to integers
                 except ValueError:
                     self.output_text.appendPlainText(f"Test case {i+1}: Invalid input format: {case.strip()}")
                     continue
 
                 try:
-                    # Apply the function and collect the result
                     result = function(*args)
                     results.append(f"Test case {i+1}: Input: {args} -> Output: {result}")
                 except Exception as e:
                     results.append(f"Test case {i+1}: Input: {args} -> Error: {e}")
 
-                # Display the result in the output pane
+                # Append results to the output window
                 self.output_text.appendPlainText(results[-1])
+
+            # New feature: Log results to a file
+            try:
+                with open("batch_test_results.txt", "w") as result_file:
+                    for result in results:
+                        result_file.write(result + "\n")  # Write each result to the file
+            except Exception as e:
+                self.statusBar().showMessage(f"Error saving results to file: {e}", 5000)
 
         except FileNotFoundError:
             self.statusBar().showMessage(f"Error: The file '{input_file_path}' does not exist.", 5000)
@@ -598,11 +636,43 @@ class AICompilerMainWindow(QMainWindow):
         """ A sample function that takes arguments and returns their sum. """
         return sum(args)
 
-    def append_output(self, output):
-        """Append text to the output field."""
-        self.output_text.moveCursor(QTextCursor.End)  # Move cursor to the end
-        self.output_text.insertPlainText(output)  # Insert text at the cursor position
-        self.output_text.moveCursor(QTextCursor.End)  # Ensure cursor remains at the end
+    def append_output(self, message, message_type="info"):
+        """Append text to the output field with different colors based on the message type."""
+        self.output_text.moveCursor(QTextCursor.MoveOperation.End)  # Move cursor to the end
+
+        # Determine the color based on the message type
+        if message_type == "error":
+            color = "red"
+        elif message_type == "warning":
+            color = "yellow"
+        else:
+            color = "white"  # Default color for info messages
+
+        # Insert the message into the output field with the selected color
+        self.output_text.insertPlainText(f'{message}\n')  # For plain text output
+
+    def process_lint_results(self, lint_data):
+        """Process and display linting results in the Output Tab."""
+        # Clear previous output
+        self.output_text.clear()
+
+        for error in lint_data:
+            line_number = error['line'] - 1  # Convert to 0-based line number
+            message = error['message']
+
+            # Debugging: Print the raw message and line number
+            print(f"Processing lint result: Line {line_number + 1}, Message: {message}")
+
+            # Classify message as error or warning based on the message prefix
+            if message.startswith("E"):  # Error codes start with 'E'
+                message_type = "error"
+                self.handle_output(f"Error on line {line_number + 1}: {message}", message_type)
+            elif message.startswith("W") or message.startswith("F"):  # Warnings use 'W' or 'F' for some issues
+                message_type = "warning"
+                self.handle_output(f"Warning on line {line_number + 1}: {message}", message_type)
+            else:
+                message_type = "info"
+                self.handle_output(f"Info on line {line_number + 1}: {message}", message_type)  # Default to info
 
 
 if __name__ == "__main__":

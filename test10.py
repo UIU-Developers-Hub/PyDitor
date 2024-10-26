@@ -1,60 +1,126 @@
-import sys
-import logging
+import plotly.graph_objects as go
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-from matplotlib.animation import FuncAnimation
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
+# Update the path to the local CSV file
+csv_path =r"E:\UDH\Compiler\gapminderDataFiveYear.csv"  # Replace with the actual path
+dataset = pd.read_csv(csv_path)
 
-try:
-    # Load the data
-    df = pd.read_csv(r'D:\Compiler\city_populations.csv', usecols=['name', 'group', 'year', 'value'])
+years = ["1952", "1962", "1967", "1972", "1977", "1982", "1987", "1992", "1997", "2002", "2007"]
 
-    # Define colors for each group
-    colors = dict(zip(['India', 'Europe', 'Asia', 'Latin America', 'Middle East', 'North America', 'Africa'],
-                      ['#adb0ff', '#ffb3ff', '#90d595', '#e48381', '#aafbff', '#f7bb5f', '#eafb50']))
+# make list of continents
+continents = dataset["continent"].unique()
 
-    # Create a lookup dictionary for group names
-    group_lk = df.set_index('name')['group'].to_dict()
+# make figure
+fig_dict = {
+    "data": [],
+    "layout": {},
+    "frames": []
+}
 
-    def draw_barchart(year):
-        dff = df[df['year'].eq(year)].sort_values(by='value', ascending=True).tail(10)
-        ax.clear()
-        ax.barh(dff['name'], dff['value'], color=[colors[group_lk[x]] for x in dff['name']])
-        dx = dff['value'].max() / 200
-        for i, (value, name) in enumerate(zip(dff['value'], dff['name'])):
-            ax.text(value-dx, i, name, size=14, weight=600, ha='right', va='bottom')
-            ax.text(value-dx, i-.25, group_lk[name], size=10, color='#444444', ha='right', va='baseline')
-            ax.text(value+dx, i, f'{value:,.0f}', size=14, ha='left', va='center')
-        ax.text(1, 0.4, year, transform=ax.transAxes, color='#777777', size=46, ha='right', weight=800)
-        ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
-        ax.xaxis.set_ticks_position('top')
-        ax.tick_params(axis='x', colors='#777777', size=12, labelsize=12)
-        ax.set_yticks([])
-        ax.margins(0, 0.01)
-        ax.grid(which='major', axis='x', linestyle='-')
-        ax.set_axisbelow(True)
-        ax.text(0, 1.12, 'The most populous cities in the world from 1500 to 2018',
-                transform=ax.transAxes, size=24, weight=600, ha='left')
-        ax.text(1, 0, 'by @pratapvardhan; credit @jburnmurdoch', 
-                transform=ax.transAxes, ha='right', color='#777777', 
-                bbox=dict(facecolor='white', alpha=0.8, edgecolor='white'))
-        plt.box(False)
+# fill in most of layout
+fig_dict["layout"]["xaxis"] = {"range": [30, 85], "title": "Life Expectancy"}
+fig_dict["layout"]["yaxis"] = {"title": "GDP per Capita", "type": "log"}
+fig_dict["layout"]["hovermode"] = "closest"
+fig_dict["layout"]["updatemenus"] = [
+    {
+        "buttons": [
+            {
+                "args": [None, {"frame": {"duration": 500, "redraw": False},
+                                "fromcurrent": True, "transition": {"duration": 300, "easing": "quadratic-in-out"}}],
+                "label": "Play",
+                "method": "animate"
+            },
+            {
+                "args": [[None], {"frame": {"duration": 0, "redraw": False},
+                                  "mode": "immediate",
+                                  "transition": {"duration": 0}}],
+                "label": "Pause",
+                "method": "animate"
+            }
+        ],
+        "direction": "left",
+        "pad": {"r": 10, "t": 87},
+        "showactive": False,
+        "type": "buttons",
+        "x": 0.1,
+        "xanchor": "right",
+        "y": 0,
+        "yanchor": "top"
+    }
+]
 
-    # Create the figure and axis
-    fig, ax = plt.subplots(figsize=(15, 8))
+sliders_dict = {
+    "active": 0,
+    "yanchor": "top",
+    "xanchor": "left",
+    "currentvalue": {
+        "font": {"size": 20},
+        "prefix": "Year:",
+        "visible": True,
+        "xanchor": "right"
+    },
+    "transition": {"duration": 300, "easing": "cubic-in-out"},
+    "pad": {"b": 10, "t": 50},
+    "len": 0.9,
+    "x": 0.1,
+    "y": 0,
+    "steps": []
+}
 
-    # Create the animation
-    animator = FuncAnimation(fig, draw_barchart, frames=range(1990, 2019))
+# make data
+year = 1952
+for continent in continents:
+    dataset_by_year = dataset[dataset["year"] == year]
+    dataset_by_year_and_cont = dataset_by_year[dataset_by_year["continent"] == continent]
 
-    # Show the plot
-    plt.show()
+    data_dict = {
+        "x": list(dataset_by_year_and_cont["lifeExp"]),
+        "y": list(dataset_by_year_and_cont["gdpPercap"]),
+        "mode": "markers",
+        "text": list(dataset_by_year_and_cont["country"]),
+        "marker": {
+            "sizemode": "area",
+            "sizeref": 200000,
+            "size": list(dataset_by_year_and_cont["pop"])
+        },
+        "name": continent
+    }
+    fig_dict["data"].append(data_dict)
 
-    # Keep the window open
-    input("Press Enter to close the plot...")
+# make frames
+for year in years:
+    frame = {"data": [], "name": str(year)}
+    for continent in continents:
+        dataset_by_year = dataset[dataset["year"] == int(year)]
+        dataset_by_year_and_cont = dataset_by_year[dataset_by_year["continent"] == continent]
 
-except Exception as e:
-    logging.error("An error occurred: %s", e)
-    sys.exit(1)
+        data_dict = {
+            "x": list(dataset_by_year_and_cont["lifeExp"]),
+            "y": list(dataset_by_year_and_cont["gdpPercap"]),
+            "mode": "markers",
+            "text": list(dataset_by_year_and_cont["country"]),
+            "marker": {
+                "sizemode": "area",
+                "sizeref": 200000,
+                "size": list(dataset_by_year_and_cont["pop"])
+            },
+            "name": continent
+        }
+        frame["data"].append(data_dict)
+
+    fig_dict["frames"].append(frame)
+    slider_step = {"args": [
+        [year],
+        {"frame": {"duration": 300, "redraw": False},
+         "mode": "immediate",
+         "transition": {"duration": 300}}
+    ],
+        "label": year,
+        "method": "animate"}
+    sliders_dict["steps"].append(slider_step)
+
+fig_dict["layout"]["sliders"] = [sliders_dict]
+
+fig = go.Figure(fig_dict)
+
+fig.show()

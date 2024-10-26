@@ -1,23 +1,31 @@
-def bubble_sort(arr):
+import importlib
 
-    # Outer loop to iterate through the list n times
-    for n in range(len(arr) - 1, 0, -1):
+def batch_test(function_name, input_file):
+    """Batch test function for any algorithm."""
+    try:
+        with open(input_file, 'r') as f:
+            test_cases = f.readlines()
 
-        # Inner loop to compare adjacent elements
-        for i in range(n):
-            if arr[i] > arr[i + 1]:
+        for i, case in enumerate(test_cases):
+            args = case.strip().split()
+            try:
+                if function_name == "merge_sort":
+                    args = [int(arg) for arg in args]
+                    result = merge_sort(args)
+                elif function_name == "dijkstra":
+                    # Parse graph and start node
+                    # Call dijkstra(graph, start_node)
+                    pass
+                elif function_name == "knapsack":
+                    # Parse knapsack data
+                    pass
+                elif function_name == "matrix_multiplication":
+                    # Parse matrices
+                    pass
+                
+                print(f"Test case {i+1}: Input: {args} -> Output: {result}")
+            except Exception as e:
+                print(f"Test case {i+1}: Error: {e}")
 
-                # Swap elements if they are in the wrong order
-                swapped = True
-                arr[i], arr[i + 1] = arr[i + 1], arr[i]
-
-
-# Sample list to be sorted
-arr = [39, 12, 18, 85, 72, 10, 2, 18]
-print("Unsorted list is:")
-print(arr)
-
-bubble_sort(arr)
-
-print("Sorted list is:")
-print(arr)
+    except FileNotFoundError:
+        print(f"Error: The file '{input_file}' does not exist.")
